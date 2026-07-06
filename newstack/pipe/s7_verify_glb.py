@@ -9,9 +9,10 @@ Parses the GLB binary header + JSON chunk directly (no deps) and checks:
     == that primitive's base POSITION count
   - morph target NAMES (mesh extras.targetNames) == manifest supported set,
     exact spelling -- the ARKit contract the whole pipeline exists to honor
-  - summed base POSITION count >= 26719 (the exporter splits verts at UV
-    seams and material boundaries -- MORE is benign, FEWER means verts LOST;
-    the 26719 topology authority is enforced at the Blender stage)
+  - summed base POSITION count >= 26719 minus the stripped eye-shell verts
+    (s6 drops the transparent-purpose lacrimal/eye-blend/eye-occlusion FACES;
+    UV-seam/material splits add verts back -- fewer than that floor means
+    verts LOST; the 26719 topology authority is enforced at the Blender stage)
   - a texture image is embedded and wired as baseColorTexture on EVERY
     material (head albedo + dedicated eye texture(s))
   - every material is explicitly opaque: alphaMode == "OPAQUE" (explicit,
@@ -27,8 +28,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import N_VERTS, P  # noqa: E402
+from common import EYE_SHELLS, N_VERTS, P  # noqa: E402
 from arkit_names import ARKIT_52  # noqa: E402
+
+# s6 strips the transparent-purpose eye-shell FACES (lacrimal/eye-blend/eye-
+# occlusion), so their verts are legitimately absent from the GLB primitives.
+MIN_EXPORT_VERTS = N_VERTS - (EYE_SHELLS[1] - EYE_SHELLS[0])
 
 
 def read_glb_json(path):
@@ -88,11 +93,17 @@ def main():
         info["morph_target_count"] = tgt_counts[0] if tgt_counts else 0
         total_pos = sum(pos_counts)
         info["position_count"] = total_pos
-        if total_pos < N_VERTS:
-            fails.append(f"summed POSITION {total_pos} < {N_VERTS} -- "
+        if total_pos < MIN_EXPORT_VERTS:
+            fails.append(f"summed POSITION {total_pos} < {MIN_EXPORT_VERTS} "
+                         f"(= {N_VERTS} minus the stripped eye shells) -- "
                          "verts LOST")
-        elif total_pos > N_VERTS:
-            info["note_splits"] = (f"POSITION {total_pos} > {N_VERTS}: "
+        elif total_pos < N_VERTS:
+            info["note_shells"] = (
+                f"POSITION {total_pos} in [{MIN_EXPORT_VERTS},{N_VERTS}): "
+                "eye-shell verts absent (s6 strips their faces; expected), "
+                "UV-seam splits add some back")
+        else:
+            info["note_splits"] = (f"POSITION {total_pos} >= {N_VERTS}: "
                                    "exporter split verts at UV seams / "
                                    "material boundaries (expected, benign)")
 

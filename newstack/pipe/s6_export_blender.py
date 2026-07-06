@@ -17,6 +17,12 @@ Everything else stays on HeadMat. Multiple materials => the exporter splits
 the mesh into multiple primitives; morph targets are exported on ALL of them
 and extras.targetNames stays mesh-level, so the ARKit name contract holds.
 
+EYE SHELLS: ICT's lacrimal-fluid/eye-blend/eye-occlusion meshes (see
+common.EYE_SHELLS) exist for Unreal-style TRANSLUCENT shaders; measured, they
+cover the eyeball forward pole, so in an opaque export they'd hide the irises
+behind skin-textured lids. Their FACES are stripped (all 26719 verts stay;
+the exporter simply never references the loose ones). Eyelashes are kept.
+
 OPAQUE HARDENING (kills the see-through-head viewer artifact): every material
 is single-sided (use_backface_culling=True -> glTF doubleSided=false; the head
 and eyeballs are closed meshes) and the exported GLB's JSON is post-processed
@@ -46,7 +52,8 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import ICT_REGIONS, N_VERTS, P, faces_as_lists, out_dir  # noqa: E402
+from common import (EYE_SHELLS, ICT_REGIONS, N_VERTS, P,  # noqa: E402
+                    faces_as_lists, out_dir)
 
 import bpy  # noqa: E402
 
@@ -191,6 +198,29 @@ def main():
     print(f"[s6] {len(names)} morph targets on {N_VERTS} verts "
           f"/ {len(faces_off)-1} polys")
 
+    # ---- strip the transparent-purpose eye shells (lacrimal fluid + eye
+    # blend + eye occlusion). MEASURED: they cover the eyeball forward pole,
+    # so an all-OPAQUE export would render them as skin-textured lids hiding
+    # the irises. FACES only -- all 26719 verts stay (loose verts are simply
+    # not referenced by any primitive). Eyelashes are kept.
+    sh0, sh1 = EYE_SHELLS
+    in_sh = ((faces_flat >= sh0) & (faces_flat < sh1)).astype(np.uint8)
+    seg_all = faces_off[:-1]
+    sh_all = np.minimum.reduceat(in_sh, seg_all).astype(bool)
+    sh_any = np.maximum.reduceat(in_sh, seg_all).astype(bool)
+    assert (sh_all == sh_any).all(), \
+        "eye-shell polys weld into other regions -- region drift, STOP"
+    counts_all = np.diff(faces_off)
+    keep = ~sh_all
+    corner_keep = np.repeat(keep, counts_all)
+    faces_flat = faces_flat[corner_keep]
+    corner_vt = corner_vt[corner_keep]
+    faces_off = np.concatenate(
+        [[0], np.cumsum(counts_all[keep])]).astype(np.int64)
+    n_stripped = int((~keep).sum())
+    print(f"[s6] stripped {n_stripped} transparent-purpose eye-shell polys "
+          f"(verts [{sh0},{sh1})); {len(faces_off)-1} polys remain")
+
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
     mesh = bpy.data.meshes.new("HeadARKit")
@@ -305,6 +335,7 @@ def main():
     with open(od / "export_info.json", "w", encoding="utf-8") as f:
         json.dump({"glb": str(glb_path), "blend": str(blend_path),
                    "n_verts": N_VERTS, "n_polys": int(len(faces_off) - 1),
+                   "stripped_eye_shell_polys": n_stripped,
                    "morph_targets": names, "draco": bool(args.draco),
                    "textured": albedo.is_file(),
                    "materials": mat_names,

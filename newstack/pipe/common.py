@@ -38,9 +38,17 @@ ICT_REGIONS = {
     "interior_a": (11248, 17039),   # mouth socket, eye sockets, gums area
     "teeth":      (17039, 21451),
     "eyeballs":   (21451, 24591),
-    "interior_b": (24591, 26719),   # lacrimal / eye occlusion / backing
+    "interior_b": (24591, 26719),   # lacrimal / eye blend+occlusion / lashes
 }
 EXTERIOR_END = 11248  # verts [0, 11248) = face + head/neck skin (shrinkable)
+
+# Transparent-purpose eye shells (ICT README ordinals #9-#14: lacrimal fluid
+# L/R + eye blend L/R + eye occlusion L/R -- Unreal Digital-Human style
+# translucent-shader meshes). MEASURED: they sit up to z=10.6 IN FRONT of the
+# eyeball forward pole (z=9.65), so in an all-OPAQUE export they hide the
+# eyes; s6 strips their FACES (all 26719 verts stay in the authored mesh).
+# Eyelashes [25351, 26719) are visible geometry and are KEPT.
+EYE_SHELLS = (24591, 25351)
 
 
 # ---------------------------------------------------------------- pod paths
