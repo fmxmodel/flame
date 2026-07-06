@@ -75,5 +75,17 @@ newARC/
 - [ ] Wire `head_arkit_v2.glb` into `out/viewer/` (three.js + MediaPipe); ICT→ARKit driver name map
 - [ ] Ship prep: THIRD-PARTY-NOTICES (rembg/U²-Net, TripoSR, ICT-FaceKit © USC-ICT 2020, MediaPipe, three.js, Draco)
 
+## Decisions (don't re-litigate)
+- **"Hole in the back of the head" was NOT geometry** — it was Blender's glTF importer assigning
+  `blend_method=HASHED` + `show_transparent_back=True`, making the skin see-through so the internal
+  teeth/tongue/eyeballs showed through. Proven: raw ICT, our pre-/post-shrinkwrap neutrals, and the
+  exported GLB with a flat opaque material all render a **solid** closed back; topology is closed and
+  identical to ICT (23 boundary loops) at every stage. Fixes: `open_avatar.py` forces opaque on import;
+  s6 hardens the GLB to `alphaMode:"OPAQUE"` + single-sided. Diagnostic renders in `out/renders/`.
+- **TRELLIS.2 rejected as the clay generator** — (a) it wouldn't fix the above (we always retopologize
+  onto ICT, so the clay never becomes the output surface), and (b) it depends on `nvdiffrast`/`nvdiffrec`
+  under NVIDIA's 1-Way *non-commercial* license, which breaks the commercial requirement (the exact NC
+  trap avoided by choosing PyTorch3D). Keep TripoSR (MIT).
+
 ## Pod
 RunPod RTX 6000 Ada. Pipeline at `/workspace/newstack/pipe/`; ICT/TripoSR at `/workspace/newstack/`; Blender 4.2.3 (headless via `xvfb-run`).

@@ -34,3 +34,6 @@ venv/
 
 # --- os ---
 .DS_Store
+
+# transient local blender launch log
+out/blender_local.log
