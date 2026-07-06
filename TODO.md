@@ -16,12 +16,15 @@ newARC/
 │       ├── s2_fit_identity.py # fit ICT identity coeffs (linear model) to the photo landmarks
 │       ├── s3a_align_clay.py  # align TripoSR clay → ICT space (pytorch3d view sweep + Umeyama)
 │       ├── s3b_refine_blender.py  # gated shrinkwrap onto smoothed clay (hair/proportions; face protected)
-│       ├── s4_build_shapes.py # additive ARKit blendshapes from ICT deltas + gated tongueOut synth
+│       ├── s4_build_shapes.py # additive ARKit blendshapes from ICT deltas + gated tongueOut/gaze synth
 │       ├── tongue_synth.py    # tongueOut delta from ICT's real static tongue (cKDTree select)
+│       ├── gaze_synth.py      # eyeball-rotation deltas for eyeLook* (ICT OBJs move lids only)
 │       ├── _selftest_tongue.py    # offline synthetic-geometry test for tongue_synth (18 checks)
-│       ├── s5_bake_texture.py # bake photo → ICT UVs  (FIX IN PROGRESS: winding/visibility)
-│       ├── s6_export_blender.py   # GLB (52/52 morphs) + .blend
-│       └── s7_verify_glb.py   # stdlib GLB parser: morph count, names vs contract, texture
+│       ├── s5_bake_texture.py # bake photo → ICT UVs + eye_left/right.png (photo-derived iris)
+│       ├── eye_texture.py     # iris/pupil/sclera sampled from photo; procedural pole-centered disc
+│       ├── s6_export_blender.py   # GLB (52/52 morphs, HeadMat+EyeMat, opaque-hardened) + .blend
+│       ├── s7_verify_glb.py   # stdlib GLB parser: morphs/names/materials-opaque vs contract
+│       └── s8_render_previews.py  # proof renders from the GLB (front/back/eyes/gaze)
 ├── recon/ rig/ blender_build_rig.py   # ALPHA (FLAME 2023 Open pipeline; superseded, kept on branch `alpha`)
 ├── out/                       # reports, manifests, head_arkit.glb (FLAME), head_arkit_v2.glb (new stack)
 │   ├── compliance_newstack.md # licensing: NEWSTACK-SHIP-CLEARED conditional→yes (4 build items)
@@ -47,7 +50,28 @@ newARC/
   Source `"synthesized-ict-tongue"`; manifest → 52 supported / 0 unsupported. Offline self-test
   (`_selftest_tongue.py`, synthetic geometry): 18/18 PASS. Verify on pod: `[tongue]` log line ~760 verts,
   centroid ≈ (0,−3.8,4.4), manifest `shapes.tongueOut.synth`.
-- [ ] Re-run `STAGES="4 5 6 7"`, re-render (correct front = Blender −Y), QA the real GLB (52/52)
+- [x] **Eyes fixed** (was: blank white stare) — eyeball UVs overlap the face UVs, so eyes get
+  DEDICATED photo-derived textures (`eye_texture.py`: iris color from MediaPipe iris ring
+  468-472/473-477, pupil from darkest central quartile, sclera from brightest decile of the
+  eye opening; procedural disc at UV (0.5,0.5) = eyeball forward pole, iris_uv_radius 0.110)
+  bound to `EyeMat` in s6. ICT's transparent-purpose eye shells (lacrimal/blend/occlusion,
+  verts [24591,25351)) are stripped at export — measured, they sat in FRONT of the iris and
+  rendered as skin-textured lids once opaque. `eyeLook*` morphs now rotate the eyeballs
+  (`gaze_synth.py`, In/Out 35°, Up 25°, Down 30°) because ICT's OBJs move lids only
+  (measured eyeball delta 0.0). Proof renders: `out/renders/glb_*.png`.
+- [x] **UDIM tile-1+ → RestMat** (kills the pre-existing stretched-face back of head) — ICT
+  UVs are multi-tile (u up to 7); the bake fills tile 0 only and the wrapping sampler painted
+  the skull back/teeth/mouth-socket with the FACE image. Polys with max corner u > 1 now use
+  `RestMat` driven by s5 per-vertex colors (photo where visible, TripoSR clay hair, honest
+  flat teeth/mouth defaults, eye sockets = shadowed skin) exported as COLOR_0.
+- [x] **Opaque export hardened** — all materials single-sided (glTF doubleSided=false) +
+  GLB JSON post-pass writes EXPLICIT `alphaMode:"OPAQUE"`; s6 re-imports the GLB and
+  measures functional opacity (alpha socket unlinked & 1.0, DITHERED, culling on; fails on
+  BLEND). Note: Blender 4.2's `blend_method` is a deprecated alias reading HASHED for ALL
+  materials (even factory-new) — functional opacity is the real gate. s7 fails any material
+  that is not explicitly OPAQUE/single-sided/textured.
+- [x] Re-run `STAGES="4 5 6 7 8"` on pod — s7 PASS (52/52 names, 2 primitives, both
+  materials OPAQUE), renders show iris+pupil+sclera, gaze morph moves the iris, back solid
 - [ ] Wire `head_arkit_v2.glb` into `out/viewer/` (three.js + MediaPipe); ICT→ARKit driver name map
 - [ ] Ship prep: THIRD-PARTY-NOTICES (rembg/U²-Net, TripoSR, ICT-FaceKit © USC-ICT 2020, MediaPipe, three.js, Draco)
 
