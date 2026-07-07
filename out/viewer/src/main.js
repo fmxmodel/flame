@@ -133,7 +133,15 @@ function collectMorphMeshes(root) {
 
 // The GLB is alphaMode OPAQUE on every material; three.js already respects that. This
 // is a belt-and-braces pass so nothing downstream (a stray transparent flag, alphaTest,
-// depthWrite=false) can make the head render see-through. We do NOT flip doubleSided.
+// depthWrite=false) can make the head render see-through.
+//
+// We ALSO force DoubleSide: the RestMat (scalp/back/neck) region has inconsistent face
+// normals (~48% inward). With the GLB's doubleSided=false, three.js culls backfaces, so
+// those inward-facing scalp faces disappear and you see through the head into the interior
+// -- looks like a translucent shell but is really backface culling of flipped normals.
+// Rendering DoubleSide draws both sides, so the nearest opaque surface always wins (with
+// depthWrite on) and the head is solid regardless of winding. The proper pipeline fix is
+// to recompute consistent outward normals in s6; this keeps the viewer correct meanwhile.
 function hardenOpaque(mesh) {
   const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
   for (const m of mats) {
@@ -143,6 +151,7 @@ function hardenOpaque(mesh) {
     m.alphaTest = 0;
     m.depthWrite = true;
     m.depthTest = true;
+    m.side = THREE.DoubleSide;
     if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
     m.needsUpdate = true;
   }

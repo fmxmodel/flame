@@ -12,11 +12,14 @@ bpy.ops.import_scene.gltf(filepath="/home/darpa/Desktop/newARC/out/head_arkit_v2
 # it looks like a hole in the back of the head). The GLB is opaque (alphaMode=OPAQUE);
 # force the Blender material opaque so the head renders solid. This is a Blender-viewer
 # fix only -- a compliant glTF viewer (three.js) already renders it opaque.
+# NOTE: use_backface_culling stays False -- the RestMat scalp/back normals are
+# inconsistent (~48% inward), so culling backfaces would make those faces vanish and
+# the head would look see-through. Show both sides so it renders solid.
 for _m in bpy.data.materials:
     for _attr, _val in (("blend_method", 'OPAQUE'),
                         ("surface_render_method", 'DITHERED'),
                         ("show_transparent_back", False),
-                        ("use_backface_culling", True),
+                        ("use_backface_culling", False),
                         ("use_transparent_shadow", False)):
         try:
             setattr(_m, _attr, _val)

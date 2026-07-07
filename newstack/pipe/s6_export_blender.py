@@ -358,6 +358,23 @@ def main():
     mesh.polygons.foreach_set("material_index", mat_idx)
     mesh.update()
 
+    # ---- recompute consistent OUTWARD normals. from_pydata derives face
+    # normals from ICT's winding order, which is inconsistent (MEASURED: ~48%
+    # of the scalp/back/neck faces wind inward). Because the export is
+    # single-sided (doubleSided=false), a culling renderer (three.js) then
+    # culls those inward front-faces and you see THROUGH the head into the
+    # interior -- a "translucent shell" that is really backface culling, not
+    # alpha. normals_make_consistent(inside=False) in EDIT mode flips faces
+    # outward while carrying UVs + shape keys (per-vertex, unaffected by
+    # winding). Verified after re-run: outward fraction jumps ~52% -> ~>95%.
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.mesh.normals_make_consistent(inside=False)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    mesh.update()
+    print("[s6] recomputed consistent outward normals "
+          "(normals_make_consistent inside=False)")
+
     glb_path = od / f"{args.name}.glb"
     export_kwargs = dict(
         filepath=str(glb_path),
