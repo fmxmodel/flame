@@ -14,8 +14,11 @@ newARC/
 │       ├── ict_loader.py      # ICT FaceXModel → cache npz (neutral + id modes + 51 expr + UVs + landmarks)
 │       ├── s1_landmarks.py    # MediaPipe landmarks on the photo
 │       ├── s2_fit_identity.py # fit ICT identity coeffs (linear model) to the photo landmarks
-│       ├── s3a_align_clay.py  # align TripoSR clay → ICT space (pytorch3d view sweep + Umeyama)
-│       ├── s3b_refine_blender.py  # gated shrinkwrap onto smoothed clay (hair/proportions; face protected)
+│       ├── s3a_align_clay.py  # align TripoSR clay → ICT space (pytorch3d view sweep + Umeyama; --prefix)
+│       ├── s3a_align_triposg.py   # TripoSG clay → ICT space (wall strip + front-render landmarks + Umeyama + rigid face polish; gated)
+│       ├── s3b_refine_blender.py  # gated shrinkwrap (legacy TripoSR mode + face-weighted TripoSG mode w/ bbox prescale)
+│       ├── s3c_verify_refine.py   # measurement gates: 26719v/23 loops, photo reprojection, back-region cleanliness
+│       ├── render_neutral.py  # grey Workbench+cavity proof renders (also the s3sg detection view, --square --dump-cam)
 │       ├── s4_build_shapes.py # additive ARKit blendshapes from ICT deltas + gated tongueOut/gaze synth
 │       ├── tongue_synth.py    # tongueOut delta from ICT's real static tongue (cKDTree select)
 │       ├── gaze_synth.py      # eyeball-rotation deltas for eyeLook* (ICT OBJs move lids only)
@@ -39,6 +42,30 @@ newARC/
 - [x] Full pipeline runs end-to-end → `head_arkit_v2.glb`, s7 PASS
 - [x] Identity fit tight to the photo; geometry is a real win over FLAME (real head + hair, not a bald adult)
 - [x] Licensing cleared (conditional): pin rembg `u2net`, ICT **Light only**, no bpy binary shipped, wire notices
+
+- [x] **s3 reworked for TripoSG clay (sharper geometry)** — `CLAY_SOURCE=triposg` path, run + verified on pod:
+  - TripoSG glb (`out_triposg/random-person_triposg_300k.glb`, 150k v, geometry-only) contains the photo's
+    **background wall fused to the person** + ~230 confetti shards; `s3a_align_triposg.py` strips the wall
+    (dominant area-weighted normal + offset peak; person side = 95th-pct depth extent, NOT vertex median —
+    the shard cloud outnumbers the head) → kept 46,374 v / 91,781 f.
+  - Alignment is **landmark-based, not blob ICP** (trimmed ICP was measured pose-degenerate on hairy partial
+    heads: 90°-off optima, scale drift 13.5–18.9): one ortho front Blender render (MediaPipe DOES detect on a
+    lit grey Workbench render; pytorch3d Phong grey = black silhouette, never detects) → columnar max-z
+    unprojection → trimmed Umeyama (57/68 kept, **rms 0.82 cm**, scale 15.06) → rigid Kabsch face polish onto
+    the fitted ICT face (**0.34 cm**; scale frozen — free scale vs partial template collapses).
+    Gates: inner-landmark→surface **0.28 cm** (≤1.0), direction-aware front-depth **0.32 cm**/0 missing (≤1.2).
+  - `s3b --weights face --prescale yz`: face region [0,9409) weight 1.0 feathering to 0 over head/neck
+    (3 cm from the region boundary), eyes/mouth/nose/ears protected, interior pinned; bbox volume-match
+    prescale measured k=(1.0, 1.027, 0.956) — tiny for this subject (hair pulled back). NOT x: the x factor
+    is hair-width driven and pushed the jaw +2.4 cm into the hair (84 px contour reproj) before the fix.
+  - `s3c` gates (all PASS): 26,719 verts, **23 boundary loops** (== raw ICT), reprojection **23.61 px** vs
+    22.30 fitted / 22.57 TripoSR-run baselines, back-region shrinkwrap disp **0.016 cm** (≤0.05), face core
+    → clay mean **0.18 cm** (the face genuinely sits ON the TripoSG surface). s4 rebuilt 52/52 on it
+    (tongueOut gates pass: tip 13.55 > lips 11.84).
+  - Renders `out/renders/neutral_triposg_*.png` vs `neutral_triposr_*.png`: TripoSR baseline has an inflated
+    hair-helmet ridge across the forehead; TripoSG version has cleaner face geometry, a real hairline crease,
+    clean ears and a solid smooth back. TripoSR path stays runnable (default `CLAY_SOURCE=triposr`, verified
+    same session) and TripoSR stays the s5 color source.
 
 ## In progress / next
 - [x] **s5 texture bake FIX authored** (pending pod re-run) — winding was inverted for ICT topology → dark central face. Now **measures** the camera-facing sign (like `recon/bake_texture.py`), rejects grazing texels + X-mirror fallback, exterior-priority UV rasterization so interior islands can't steal face texels, and a `central_face` sanity gate in `bake_metrics.json`. Verify `winding.facing_sign` + `central_face.pass` after re-run.
