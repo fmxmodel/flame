@@ -22,7 +22,14 @@ One diffuse map, no statistical/NC albedo prior:
           then PALETTE-MATCHED to the photo with a per-channel affine map
           fitted (residual-trimmed) on texels where photo AND clay overlap --
           so TripoSR's washed-out palette lands on the photo's palette and the
-          hairline/jaw blend has no color step.
+          hairline/jaw blend has no color step. The SCALP CAP (above the
+          hairline, measured from the brow/chin landmarks) additionally gets a
+          per-channel mean/std transfer fitted ONLY on cap texels where photo
+          AND clay overlap: MEASURED, TripoSR's crown hallucination is
+          desaturated grey-beige and out-of-distribution vs all photo-visible
+          clay, so the global affine cannot land it on the subject's real
+          hair; the photo itself shows the true scalp-top palette (hair -- or
+          skin if bald, which self-corrects). Feathered below the hairline.
   MIRROR  exterior texels with neither photo nor clay try the X-mirrored
           position through the same camera (faces are ~symmetric; person-mask
           enforced there too) before falling back to inpaint.
@@ -179,6 +186,14 @@ def main():
                     help="min photo weight for a texel to join the palette fit")
     ap.add_argument("--match-trim", type=float, default=0.2,
                     help="fraction of worst residuals dropped per fit pass")
+    ap.add_argument("--no-cap-match", action="store_true",
+                    help="skip the scalp-cap hair-palette transfer")
+    ap.add_argument("--cap-lo", type=float, default=0.35,
+                    help="cap feather start: brow_y + lo*(brow_y - chin_y)")
+    ap.add_argument("--cap-hi", type=float, default=0.55,
+                    help="cap feather full-on: brow_y + hi*(brow_y - chin_y)")
+    ap.add_argument("--cap-min-pairs", type=int, default=1500,
+                    help="min photo+clay cap texels to trust the cap transfer")
     ap.add_argument("--eye-size", type=int, default=512,
                     help="eye texture resolution (px)")
     ap.add_argument("--iris-frac", type=float, default=None,
@@ -294,7 +309,10 @@ def main():
     clay_col = np.zeros_like(photo_col)
     clay_ok = np.zeros(K, dtype=bool)
     gain, offs = np.ones(3), np.zeros(3)
+    cap_gain, cap_offs = np.ones(3), np.zeros(3)
+    cap0 = cap1 = 0.0
     match_info = {"applied": False, "reason": "no clay"}
+    cap_info = {"applied": False, "reason": "no clay"}
     ctree, ccols = None, None
     clay_ply = Path(args.out) / "clay" / "clay_aligned.ply"
     if clay_ply.is_file():
@@ -304,16 +322,51 @@ def main():
         cverts = np.asarray(cm.vertices)
         ccols = np.asarray(cm.visual.vertex_colors, dtype=np.float64)[:, :3] / 255.0
         ctree = cKDTree(cverts)
-        dist, clay_col = sample_clay(ctree, ccols, pos, args.clay_knn)
+        dist, clay_raw = sample_clay(ctree, ccols, pos, args.clay_knn)
         clay_ok = dist < args.clay_max_dist
+        clay_col = clay_raw
         if not args.no_clay_match:
             pairs = (reg <= 1) & clay_ok & (w_photo >= args.match_min_w)
             gain, offs, match_info = fit_clay_to_photo(
-                clay_col[pairs], photo_col[pairs], args.match_trim)
+                clay_raw[pairs], photo_col[pairs], args.match_trim)
             if match_info["applied"]:
-                clay_col = np.clip(clay_col * gain + offs, 0.0, 1.0)
+                clay_col = np.clip(clay_raw * gain + offs, 0.0, 1.0)
+        # scalp-cap hair-palette transfer (see module docstring): the global
+        # affine is dominated by skin pairs and MEASURED cannot rescue the
+        # crown (TripoSR hallucinates it desaturated grey-beige, closer to
+        # the clay's SKIN cluster than to any hair color). The photo shows
+        # the real scalp-top above the hairline; per-channel mean/std
+        # transfer fitted there, applied to the cap fill, feathered below.
+        lmk_y = expressed[z["lmk_verts"]][:, 1]
+        brow_y, chin_y = float(lmk_y[17:27].mean()), float(lmk_y[8])
+        cap0 = brow_y + args.cap_lo * (brow_y - chin_y)
+        cap1 = brow_y + args.cap_hi * (brow_y - chin_y)
+        w_cap = smoothstep(pos[:, 1], cap0, cap1)
+        if not args.no_cap_match:
+            cpair = ((reg <= 1) & clay_ok & (w_photo >= args.match_min_w)
+                     & (w_cap > 0.7))
+            n_cpair = int(cpair.sum())
+            if n_cpair >= args.cap_min_pairs:
+                mu_c, sd_c = clay_raw[cpair].mean(0), clay_raw[cpair].std(0)
+                mu_p, sd_p = photo_col[cpair].mean(0), photo_col[cpair].std(0)
+                cap_gain = np.clip(sd_p / np.maximum(sd_c, 1e-6), 0.4, 2.5)
+                cap_offs = mu_p - cap_gain * mu_c
+                cap_mapped = np.clip(clay_raw * cap_gain + cap_offs, 0.0, 1.0)
+                clay_col = ((1.0 - w_cap[:, None]) * clay_col
+                            + w_cap[:, None] * cap_mapped)
+                cap_info = {"applied": True, "pairs": n_cpair,
+                            "cap_y_cm": [round(cap0, 2), round(cap1, 2)],
+                            "gain": np.round(cap_gain, 3).tolist(),
+                            "offset": np.round(cap_offs, 3).tolist(),
+                            "photo_mu": np.round(mu_p, 3).tolist(),
+                            "clay_mu": np.round(mu_c, 3).tolist()}
+            else:
+                cap_info = {"applied": False, "pairs": n_cpair,
+                            "reason": f"cap pairs < {args.cap_min_pairs}"}
+        else:
+            cap_info = {"applied": False, "reason": "--no-cap-match"}
         print(f"[s5] clay-fillable texels: {int(clay_ok.sum())}; "
-              f"palette match: {match_info}")
+              f"palette match: {match_info}; cap match: {cap_info}")
     else:
         print(f"[s5 WARN] {clay_ply} missing -- no clay fill (holes -> inpaint)")
 
@@ -503,8 +556,14 @@ def main():
     from common import EYE_SOCKETS
     vcol[EYE_SOCKETS[0]:EYE_SOCKETS[1]] = skin_mean * 0.8  # shadowed lid skin
     if ctree is not None:
-        dist_v, ccol_v = sample_clay(ctree, ccols, expressed[ext_v], args.clay_knn)
-        ccol_v = np.clip(ccol_v * gain + offs, 0.0, 1.0)
+        dist_v, ccol_raw_v = sample_clay(ctree, ccols, expressed[ext_v],
+                                         args.clay_knn)
+        ccol_v = np.clip(ccol_raw_v * gain + offs, 0.0, 1.0)
+        if cap_info.get("applied"):
+            w_cap_v = smoothstep(expressed[ext_v][:, 1], cap0, cap1)
+            cap_v = np.clip(ccol_raw_v * cap_gain + cap_offs, 0.0, 1.0)
+            ccol_v = ((1.0 - w_cap_v[:, None]) * ccol_v
+                      + w_cap_v[:, None] * cap_v)
         near = dist_v < args.clay_max_dist
         tmp = vcol[ext_v]
         tmp[near] = ccol_v[near]
@@ -593,6 +652,7 @@ def main():
         "person_mask": bg_info,
         "backdrop_rejected_texels": n_bg,
         "clay_match": match_info,
+        "cap_match": cap_info,
         "winding": {"frac_ndotv_neg_on_depth_pass": frac_neg,
                     "facing_sign": facing_sign,
                     "note": "sign measured from depth-passing exterior texels, "
