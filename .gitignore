@@ -37,3 +37,5 @@ venv/
 
 # transient local blender launch log
 out/blender_local.log
+out/viewer_dev.log
+out/viewer_dev_5174.log
