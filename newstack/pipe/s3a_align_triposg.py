@@ -12,10 +12,11 @@ transform onto that surface:
 
   0. CLEANUP: TripoSG reconstructs the photo's BACKGROUND WALL as a huge
      flat slab fused to the person (79%-of-faces component spans the full
-     bbox) plus ~230 floating confetti shards. The slab is detected as the
-     dominant area-weighted normal direction + the strongest planar-offset
-     peak; its faces are stripped, then the largest connected component is
-     kept. Without this the ICP centroid/scale/trim are all poisoned
+     bbox) plus ~230 floating confetti shards and a hair-shard chaos hugging
+     the wall. The wall is detected as the dominant area-weighted normal
+     direction + the strongest planar-offset peak; the wall band AND
+     everything behind it are dropped, then the largest connected component
+     is kept. Without this the ICP centroid/scale/trim are all poisoned
      (measured: it locked 90 degrees off);
   1. coarse init sweep: 24 proper axis-permutation rotations x centroid +
      RMS-radius scale, each scored by a short trimmed ICP (TripoSG is
@@ -79,38 +80,45 @@ def proper_rotations_24():
     return mats
 
 
-def strip_background_slab(v, f, eps=0.05, ang_deg=25.0):
-    """Remove the reconstructed background wall + confetti from a TripoSG
-    mesh. Returns (verts, faces, info). Raw (pre-alignment) units.
+def strip_background_slab(v, f, eps=0.06, ang_deg=25.0):
+    """Remove the reconstructed background wall (+ the hair-shard chaos that
+    hugs it, + confetti) from a TripoSG mesh. Returns (verts, faces, info).
+    Raw (pre-alignment) units.
 
-    Slab detection: dominant direction of the area-weighted normal outer-
+    The wall is the dominant direction of the area-weighted normal outer-
     product (a wall concentrates area in ONE +-direction; a head spreads it
-    over the sphere), then the strongest histogram peak of vertex offsets
-    along that direction among wall-normal faces. Faces in that plane band
-    with matching normals are dropped; largest connected component kept."""
+    over the sphere -- and decimation collapses the flat wall into FEW HUGE
+    faces, so area weighting is essential). Its depth is the strongest
+    area-weighted histogram peak of wall-normal face offsets. The wall is
+    WARPED, so a thin plane band is not enough (measured: 8.7k of ~30k wall
+    faces): orient the normal so the person (vertex-median side) is positive
+    and drop EVERYTHING at or behind the wall band, then keep the largest
+    connected component (kills shards/confetti)."""
     import trimesh
     m = trimesh.Trimesh(vertices=v, faces=f, process=False)
     fn = m.face_normals
     fa = m.area_faces
     M = (fn * fa[:, None]).T @ fn                  # 3x3 direction mass
-    w_, V_ = np.linalg.eigh(M)
+    _, V_ = np.linalg.eigh(M)
     n = V_[:, -1]                                  # dominant unsigned normal
     cos_lim = np.cos(np.radians(ang_deg))
-    wallish = np.abs(fn @ n) > cos_lim
     cen = v[f].mean(axis=1)                        # face centroids
     proj = cen @ n
+    wallish = np.abs(fn @ n) > cos_lim
     hist, edges_ = np.histogram(proj[wallish], bins=200,
                                 weights=fa[wallish])
     d_star = 0.5 * (edges_[np.argmax(hist)] + edges_[np.argmax(hist) + 1])
-    slab = wallish & (np.abs(proj - d_star) < eps)
-    m.update_faces(~slab)
+    if np.median(v @ n) < d_star:                  # person on negative side
+        n, d_star, proj = -n, -d_star, -proj       # -> flip toward person
+    behind = proj < d_star + eps                   # wall band + all behind it
+    m.update_faces(~behind)
     comps = m.split(only_watertight=False)
     if not len(comps):
         die("slab strip removed everything -- eps/angle too aggressive")
     main_c = max(comps, key=lambda c: len(c.faces))
-    info = {"slab_normal": np.round(n, 4).tolist(),
+    info = {"slab_normal_toward_person": np.round(n, 4).tolist(),
             "slab_offset": float(d_star),
-            "slab_faces_removed": int(slab.sum()),
+            "faces_removed_at_or_behind_wall": int(behind.sum()),
             "components_after_strip": int(len(comps)),
             "kept_faces": int(len(main_c.faces)),
             "kept_verts": int(len(main_c.vertices))}
@@ -188,8 +196,9 @@ def main():
                     help="cm; GATE on mean INNER-landmark->SG-surface distance")
     ap.add_argument("--max-front-err", type=float, default=1.2,
                     help="cm; GATE on mean front-depth error at inner landmarks")
-    ap.add_argument("--slab-eps", type=float, default=0.05,
-                    help="raw units; plane-band half-width for slab removal")
+    ap.add_argument("--slab-eps", type=float, default=0.06,
+                    help="raw units; wall band half-width (everything at or "
+                         "behind the wall is dropped)")
     ap.add_argument("--no-slab-strip", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
@@ -219,8 +228,9 @@ def main():
     if not args.no_slab_strip:
         v_raw, faces, strip_info = strip_background_slab(
             v_raw, faces, eps=args.slab_eps)
-        print(f"[s3sg] slab strip: removed {strip_info['slab_faces_removed']} "
-              f"wall faces (n={strip_info['slab_normal']}, "
+        print(f"[s3sg] slab strip: removed "
+              f"{strip_info['faces_removed_at_or_behind_wall']} faces at/"
+              f"behind the wall (n={strip_info['slab_normal_toward_person']}, "
               f"d={strip_info['slab_offset']:.3f}), kept largest of "
               f"{strip_info['components_after_strip']} comps -> "
               f"{strip_info['kept_verts']} v / {strip_info['kept_faces']} f  "
