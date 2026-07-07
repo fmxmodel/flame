@@ -134,9 +134,14 @@ def main():
     ap.add_argument("--force-bbox", action="store_true")
     ap.add_argument("--fallback-up", choices=list(PRE_ROTS), default="y_up")
     ap.add_argument("--fallback-yaw", type=float, default=0.0)
+    ap.add_argument("--prefix", default="clay",
+                    help="output file prefix ('clay' = legacy TripoSR names; "
+                         "e.g. 'clay_sg' aligns another clay w/o overwriting)")
     args = ap.parse_args()
     t0 = time.time()
     od = out_dir(args.out, "clay")
+    pfx = args.prefix
+    dbg_sfx = "" if pfx == "clay" else f"_{pfx}"
 
     fitted = np.load(Path(args.out) / "fit" / "fitted_neutral.npy")
     topo = np.load(Path(args.out) / "fit" / "topology.npz")
@@ -192,7 +197,7 @@ def main():
                 print("[s3a WARN] face lost at full res -- bbox fallback")
             else:
                 import cv2
-                cv2.imwrite(str(od / "debug_best_view.png"), rgb[..., ::-1])
+                cv2.imwrite(str(od / f"debug_best_view{dbg_sfx}.png"), rgb[..., ::-1])
                 lm = landmarks_to_np(res)
                 clay_pts, ict_pts, used = [], [], []
                 dbg = rgb.copy()
@@ -205,7 +210,7 @@ def main():
                     ict_pts.append(ict_lmk[i])
                     used.append(i)
                     cv2.circle(dbg, (int(px), int(py)), 3, (0, 255, 0), -1)
-                cv2.imwrite(str(od / "debug_landmarks.png"), dbg[..., ::-1])
+                cv2.imwrite(str(od / f"debug_landmarks{dbg_sfx}.png"), dbg[..., ::-1])
                 if len(used) < 20:
                     print(f"[s3a WARN] only {len(used)} unprojected landmarks -- bbox fallback")
                 else:
@@ -248,16 +253,16 @@ def main():
     v_aligned = S * (R_total @ v_raw.T).T + T
     align_info.update({"S": float(S), "R": R_total.tolist(), "T": np.asarray(T).tolist(),
                        "clay_verts": int(len(v_aligned)), "clay_faces": int(len(faces))})
-    save_json(od / "clay_align.json", align_info)
+    save_json(od / f"{pfx}_align.json", align_info)
 
     import trimesh
     tm = trimesh.Trimesh(vertices=v_aligned, faces=faces,
                          vertex_colors=(np.clip(cols, 0, 1) * 255).astype(np.uint8),
                          process=False)
-    tm.export(od / "clay_aligned.ply")
-    np.savez(od / "clay_aligned.npz",
+    tm.export(od / f"{pfx}_aligned.ply")
+    np.savez(od / f"{pfx}_aligned.npz",
              verts=v_aligned.astype(np.float32), faces=faces.astype(np.int32))
-    print(f"[s3a] aligned clay -> {od / 'clay_aligned.ply'} "
+    print(f"[s3a] aligned clay -> {od / (pfx + '_aligned.ply')} "
           f"(bbox y: {v_aligned[:,1].min():.1f}..{v_aligned[:,1].max():.1f} cm "
           f"vs ICT {fitted[:,1].min():.1f}..{fitted[:,1].max():.1f})")
     print(f"[s3a] DONE in {time.time()-t0:.1f}s")

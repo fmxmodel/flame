@@ -1,46 +1,33 @@
 #!/usr/bin/env python3
-"""Stage 3a-SG -- rigid-align the TripoSG clay (GEOMETRY-ONLY, no texture) to
-ICT space via trimmed ICP against the ALREADY-ALIGNED TripoSR clay
-(system python: trimesh + scipy).
+"""Stage 3a-SG -- align the TripoSG clay (GEOMETRY-ONLY, no texture) to ICT
+space (system python: trimesh + scipy + [via s3a_align_clay] pytorch3d +
+mediapipe).
 
-Why not the landmark route (s3a_align_clay.py): TripoSG ships no vertex
-colors/texture, so a pytorch3d render is a blank grey head and MediaPipe
-cannot find a face on it. Instead we exploit that the TripoSR clay -- SAME
-head, SAME photo, similar shape -- is already expressed in ICT space (cm,
-+Y up, +Z front) by s3a_align_clay.py. TripoSG then only needs a similarity
-transform onto that surface:
-
-  0. CLEANUP: TripoSG reconstructs the photo's BACKGROUND WALL as a huge
-     flat slab fused to the person (79%-of-faces component spans the full
-     bbox) plus ~230 floating confetti shards and a hair-shard chaos hugging
-     the wall. The wall is detected as the dominant area-weighted normal
-     direction + the strongest planar-offset peak; the wall band AND
-     everything behind it are dropped, then the largest connected component
-     is kept. Without this the ICP centroid/scale/trim are all poisoned
-     (measured: it locked 90 degrees off);
-  1. global trimmed ICP from the IDENTITY-rotation init (measured on this
-     pod: TripoSG's canonical frame is already +Y-up / face-toward-+Z, the
-     ICT convention; scale is seeded from robust x-widths, translation from
-     crown/nose/median-x anchors). The trimmed blob objective is nearly
-     pose-invariant for hairy partial heads -- a 24-rotation sweep repeatedly
-     locked 90-deg-off poses -- so the sweep is only a FALLBACK, and the
-     winner is chosen by the direction-aware front-depth metric, never by
-     ICP rms. The ICP target is the SR HEAD BAND (y >= --target-ymin), not
-     the full bust, so SR's chest cannot bias the scale;
-  2. fine trimmed ICP from the best init: Umeyama similarity (scale+R+t)
-     refit each iteration on nearest-neighbour pairs, worst --trim quantile
-     of correspondences dropped (hair interpretation + bust cropping differ
-     between the two generators);
-  3. FACE-POLISH ICP: the global fit registers the blob, but the two
-     generators disagree most about hair, which biases the face by ~1 cm.
-     A final trimmed RIGID-ONLY ICP (R+t, Kabsch -- scale stays from the
-     global fit: a free scale against a partial smooth template collapses,
-     measured 13.48 -> 9.70) registers the SG points that lie near the
-     fitted ICT FACE region [0,9409) against those face verts -- the exact
-     surface the s3b shrinkwrap will pull the ICT face onto.
+Pipeline:
+  1. CLEANUP: TripoSG reconstructs the photo's BACKGROUND WALL as a huge
+     warped slab fused to the person (79%-of-faces component spanning the
+     full bbox) plus ~230 confetti shards and a hair-shard chaos hugging the
+     wall. The wall is the dominant direction of the area-weighted normal
+     outer-product; its depth is the strongest planar-offset histogram peak.
+     The normal is oriented toward the person (vertex-median side), the wall
+     band AND everything behind it are dropped, and the largest connected
+     component is kept. Without this every downstream step is poisoned.
+  2. LANDMARK ALIGNMENT: the cleaned clay is handed to the PROVEN legacy
+     aligner (s3a_align_clay.py --prefix clay_sg): pytorch3d render sweep +
+     MediaPipe + landmark unprojection + trimmed Umeyama similarity.
+     MediaPipe detects the face on a LIT FLAT-GREY render just fine
+     (measured on this pod) -- the "no texture => no landmarks" assumption
+     held only for unlit/blank renders. Landmark correspondences are
+     SEMANTIC, so the scale is well-posed -- unlike blob ICP, which was
+     measured to be pose-degenerate on hairy partial heads (90-deg-off
+     optima, scale drift 13.5-18.9 across runs).
+  3. FACE-POLISH: rigid-only trimmed ICP (R+t, Kabsch; scale frozen -- a
+     free scale against a partial smooth template collapses, measured
+     13.48 -> 9.70) of the near-face SG points onto the fitted ICT face
+     region [0,9409) -- the exact surface s3b will shrinkwrap the face onto.
 
 GATED (dies loudly, never ships a mis-aligned clay):
-  - trimmed inlier RMSE  <= --max-rms cm  (global fit)
+  - the legacy aligner must have used mediapipe+umeyama (bbox fallback = die)
   - fitted-ICT INNER-face landmark verts (brows/nose/eyes/mouth, iBUG 17-67)
     -> aligned-SG-surface mean distance <= --max-face-dist cm
   - FRONT-DEPTH gate (direction-aware -- nearest-vertex distance alone lets
@@ -52,53 +39,31 @@ Artifacts are saved BEFORE the gates fire so a failure can be inspected.
 
 Outputs under out/clay/ (the TripoSR files are NOT touched -- TripoSR stays
 the s5 color source):
+  clay_sg_cleaned.ply   slab-stripped TripoSG in RAW coords (debug)
   clay_sg_aligned.npz   verts float32 + tri faces int32 (s3b shrinkwrap target)
   clay_sg_aligned.ply   same mesh, for eyeballing
-  clay_sg_align.json    S, R, T + ICP metrics + gate values
+  clay_sg_align.json    S, R, T + metrics + gate values
 """
 
 import argparse
+import json
+import subprocess
 import sys
 import time
-from itertools import permutations, product
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import ICT_REGIONS, P, die, out_dir, save_json, umeyama  # noqa: E402
+from common import ICT_REGIONS, P, die, out_dir, save_json  # noqa: E402
 
 FACE_END = ICT_REGIONS["face"][1]  # 9409
-
-
-def proper_rotations_24():
-    """All 24 proper (det=+1) signed axis-permutation matrices."""
-    mats = []
-    for perm in permutations(range(3)):
-        for signs in product((1.0, -1.0), repeat=3):
-            M = np.zeros((3, 3))
-            for row, (p, s) in enumerate(zip(perm, signs)):
-                M[row, p] = s
-            if np.linalg.det(M) > 0.5:
-                mats.append(M)
-    assert len(mats) == 24
-    return mats
 
 
 def strip_background_slab(v, f, eps=0.06, ang_deg=25.0):
     """Remove the reconstructed background wall (+ the hair-shard chaos that
     hugs it, + confetti) from a TripoSG mesh. Returns (verts, faces, info).
-    Raw (pre-alignment) units.
-
-    The wall is the dominant direction of the area-weighted normal outer-
-    product (a wall concentrates area in ONE +-direction; a head spreads it
-    over the sphere -- and decimation collapses the flat wall into FEW HUGE
-    faces, so area weighting is essential). Its depth is the strongest
-    area-weighted histogram peak of wall-normal face offsets. The wall is
-    WARPED, so a thin plane band is not enough (measured: 8.7k of ~30k wall
-    faces): orient the normal so the person (vertex-median side) is positive
-    and drop EVERYTHING at or behind the wall band, then keep the largest
-    connected component (kills shards/confetti)."""
+    Raw (pre-alignment) units. See module docstring, step 1."""
     import trimesh
     m = trimesh.Trimesh(vertices=v, faces=f, process=False)
     fn = m.face_normals
@@ -157,71 +122,32 @@ def rigid_fit(src, dst):
     return R, mu_d - R @ mu_s
 
 
-def icp_trimmed(src, tgt, tree, s, R, t, iters, trim, tol=1e-5):
-    """Trimmed point-to-point ICP; similarity refit by Umeyama each iter.
-    Returns (s, R, t, inlier_rms, iters_run). src/tgt (N,3)/(M,3)."""
-    rms = None
-    it = 0
-    for it in range(1, iters + 1):
-        cur = s * (src @ R.T) + t
-        d, j = tree.query(cur, workers=-1)
-        thr = np.quantile(d, 1.0 - trim)
-        keep = d <= thr
-        new_rms = float(np.sqrt((d[keep] ** 2).mean()))
-        s, R, t = umeyama(src[keep], tgt[j[keep]])
-        if rms is not None and abs(rms - new_rms) < tol:
-            rms = new_rms
-            break
-        rms = new_rms
-    return s, R, t, rms, it
-
-
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--clay-sg",
                     default="/workspace/newstack/out_triposg/random-person_triposg_300k.glb")
+    ap.add_argument("--task", default=P.MP_TASK)
     ap.add_argument("--out", default=P.OUT)
-    ap.add_argument("--target-npz", default=None,
-                    help="aligned TripoSR clay npz (default out/clay/clay_aligned.npz)")
-    ap.add_argument("--n-src", type=int, default=20000)
-    ap.add_argument("--coarse-src", type=int, default=4000)
-    ap.add_argument("--coarse-iters", type=int, default=10)
-    ap.add_argument("--fine-iters", type=int, default=80)
-    ap.add_argument("--target-ymin", type=float, default=-8.0,
-                    help="cm; crop the SR target below this (head band) so "
-                         "the chest cannot bias the ICP scale")
-    ap.add_argument("--trim", type=float, default=0.25,
-                    help="fraction of worst NN correspondences dropped per iter")
-    ap.add_argument("--face-iters", type=int, default=40,
-                    help="face-polish ICP iterations (0 = disable)")
-    ap.add_argument("--face-cap", type=float, default=2.0,
-                    help="cm; SG points farther than this from the fitted "
-                         "face are excluded from the polish")
-    ap.add_argument("--face-trim", type=float, default=0.30)
-    ap.add_argument("--max-rms", type=float, default=1.2,
-                    help="cm; GATE on trimmed inlier RMSE (global fit)")
-    ap.add_argument("--max-face-dist", type=float, default=1.0,
-                    help="cm; GATE on mean INNER-landmark->SG-surface distance")
-    ap.add_argument("--max-front-err", type=float, default=1.2,
-                    help="cm; GATE on mean front-depth error at inner landmarks")
     ap.add_argument("--slab-eps", type=float, default=0.06,
                     help="raw units; wall band half-width (everything at or "
                          "behind the wall is dropped)")
     ap.add_argument("--no-slab-strip", action="store_true")
+    ap.add_argument("--face-iters", type=int, default=40,
+                    help="face-polish rigid ICP iterations (0 = disable)")
+    ap.add_argument("--face-cap", type=float, default=2.0,
+                    help="cm; SG points farther than this from the fitted "
+                         "face are excluded from the polish")
+    ap.add_argument("--face-trim", type=float, default=0.30)
+    ap.add_argument("--n-src", type=int, default=20000)
+    ap.add_argument("--max-face-dist", type=float, default=1.0,
+                    help="cm; GATE on mean INNER-landmark->SG-surface distance")
+    ap.add_argument("--max-front-err", type=float, default=1.2,
+                    help="cm; GATE on mean front-depth error at inner landmarks")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
     t0 = time.time()
     od = out_dir(args.out, "clay")
     from scipy.spatial import cKDTree
-
-    tgt_npz = Path(args.target_npz) if args.target_npz \
-        else Path(args.out) / "clay" / "clay_aligned.npz"
-    if not tgt_npz.is_file():
-        die(f"{tgt_npz} missing -- run s3a_align_clay.py (TripoSR landmark "
-            "alignment) first; it is the ICP target AND the s5 color source")
-    tz = np.load(tgt_npz)
-    tgt_v = tz["verts"].astype(np.float64)
-    print(f"[s3sg] ICP target (TripoSR aligned): {len(tgt_v)} v")
 
     import trimesh
     m = trimesh.load(args.clay_sg, process=False, force="mesh")
@@ -244,136 +170,78 @@ def main():
               f"{strip_info['kept_verts']} v / {strip_info['kept_faces']} f  "
               f"extent={np.round(v_raw.max(0) - v_raw.min(0), 2)}")
 
-    rng = np.random.default_rng(args.seed)
-    src = v_raw[rng.choice(len(v_raw), min(args.n_src, len(v_raw)), replace=False)]
-    src_c = src[rng.choice(len(src), min(args.coarse_src, len(src)), replace=False)]
-    # head-band target: SR's chest must not bias the ICP scale
-    tgt_head = tgt_v[tgt_v[:, 1] >= args.target_ymin]
-    tree = cKDTree(tgt_head)
+    cleaned_ply = od / "clay_sg_cleaned.ply"
+    trimesh.Trimesh(vertices=v_raw, faces=faces, process=False)\
+        .export(cleaned_ply)
 
+    # ---- landmark alignment via the proven legacy aligner ---------------
+    cmd = [sys.executable, str(Path(__file__).resolve().parent / "s3a_align_clay.py"),
+           "--clay", str(cleaned_ply), "--task", str(args.task),
+           "--out", str(args.out), "--prefix", "clay_sg"]
+    print(f"[s3sg] invoking landmark aligner: {' '.join(cmd)}")
+    rc = subprocess.run(cmd).returncode
+    if rc != 0:
+        die(f"landmark aligner failed (exit {rc})")
+    with open(od / "clay_sg_align.json", encoding="utf-8") as fjs:
+        base_info = json.load(fjs)
+    if base_info.get("method") != "mediapipe+umeyama":
+        die(f"landmark aligner fell back to {base_info.get('method')} -- "
+            "NOT trusting a bbox alignment for the shrinkwrap target")
+    S = float(base_info["S"])
+    R = np.asarray(base_info["R"], dtype=np.float64)
+    T = np.asarray(base_info["T"], dtype=np.float64)
+    v_aligned = S * (v_raw @ R.T) + T
+    print(f"[s3sg] landmark alignment: rms={base_info['residual_rms_cm']:.2f} "
+          f"cm  scale={S:.4f}")
+
+    # ---- rigid face polish onto the fitted ICT face ----------------------
     fitted = np.load(Path(args.out) / "fit" / "fitted_neutral.npy")
     lmk_verts = np.load(Path(args.out) / "fit" / "topology.npz")["lmk_verts"]
-    face_tgt = fitted[:FACE_END]
-    tree_face = cKDTree(face_tgt)
-
-    def face_polish(s_f, R_f, t_f):
-        """Rigid-only trimmed ICP of near-face SG points onto the fitted ICT
-        face. Returns (s,R,t, n_pairs, face_rms) or None if too few pairs."""
-        n_pairs = 0
-        for _ in range(args.face_iters):
-            cur = s_f * (src @ R_f.T) + t_f
-            d, j = tree_face.query(cur, workers=-1)
-            keep = d <= args.face_cap
-            if keep.sum() < 500:
-                return None
-            thr = np.quantile(d[keep], 1.0 - args.face_trim)
-            keep &= d <= thr
-            n_pairs = int(keep.sum())
-            # rigid-only refit in the SCALED source frame (scale frozen:
-            # a free scale against a partial template collapses)
-            R_d, t_d = rigid_fit(s_f * (src[keep] @ R_f.T) + t_f,
-                                 face_tgt[j[keep]])
-            R_f = R_d @ R_f
-            t_f = R_d @ t_f + t_d
-        d, _ = tree_face.query(s_f * (src @ R_f.T) + t_f, workers=-1)
+    tree_face = cKDTree(fitted[:FACE_END])
+    rng = np.random.default_rng(args.seed)
+    src = v_aligned[rng.choice(len(v_aligned),
+                               min(args.n_src, len(v_aligned)), replace=False)]
+    R_p, t_p = np.eye(3), np.zeros(3)
+    n_pairs, face_rms = 0, None
+    for _ in range(args.face_iters):
+        cur = src @ R_p.T + t_p
+        d, j = tree_face.query(cur, workers=-1)
+        keep = d <= args.face_cap
+        if keep.sum() < 500:
+            die(f"face polish: only {int(keep.sum())} SG points within "
+                f"{args.face_cap} cm of the fitted face -- alignment is off")
+        thr = np.quantile(d[keep], 1.0 - args.face_trim)
+        keep &= d <= thr
+        n_pairs = int(keep.sum())
+        R_d, t_d = rigid_fit(cur[keep], fitted[:FACE_END][j[keep]])
+        R_p = R_d @ R_p
+        t_p = R_d @ t_p + t_d
+    if args.face_iters > 0:
+        d, _ = tree_face.query(src @ R_p.T + t_p, workers=-1)
         d_in = d[d <= args.face_cap]
-        rms = float(np.sqrt((d_in[d_in <= np.quantile(
+        face_rms = float(np.sqrt((d_in[d_in <= np.quantile(
             d_in, 1.0 - args.face_trim)] ** 2).mean()))
-        return s_f, R_f, t_f, n_pairs, rms
+        print(f"[s3sg] face polish: {n_pairs} pairs  rigid  "
+              f"face inlier rms={face_rms:.3f} cm")
+        v_aligned = v_aligned @ R_p.T + t_p
+        R = R_p @ R
+        T = R_p @ T + t_p
 
-    inner_lmk = fitted[lmk_verts[17:]]
-
-    def align_from(s0, R0, t0):
-        """Global trimmed ICP + rigid face polish; scored by the
-        direction-aware front-depth mean (NOT by ICP rms)."""
-        s_f, R_f, t_f, rms_f, it_f = icp_trimmed(
-            src, tgt_head, tree, s0, R0, t0,
-            iters=args.fine_iters, trim=args.trim)
-        pol = face_polish(s_f, R_f, t_f)
-        if pol is None:
-            return None
-        s_f, R_f, t_f, n_pairs, face_rms = pol
-        fd_err, fd_miss = front_depth_errors(
-            inner_lmk, s_f * (src @ R_f.T) + t_f)
-        fd = float(fd_err.mean()) if len(fd_err) else np.inf
-        return {"s": s_f, "R": R_f, "t": t_f, "global_rms": rms_f,
-                "iters": it_f, "n_pairs": n_pairs, "face_rms": face_rms,
-                "fd_mean": fd, "fd_miss": fd_miss}
-
-    # ---- primary init: IDENTITY rotation (TripoSG canonical frame is
-    # +Y-up / face-toward-+Z, measured), robust scale + anchor translation
-    def widths(v):
-        return np.percentile(v[:, 0], 95) - np.percentile(v[:, 0], 5)
-
-    def anchor(v):  # median x, crown y, nose z -- stable on both meshes
-        return np.array([np.median(v[:, 0]),
-                         np.percentile(v[:, 1], 98),
-                         np.percentile(v[:, 2], 98)])
-
-    s0 = widths(tgt_head) / max(widths(src), 1e-12)
-    t0 = anchor(tgt_head) - s0 * anchor(src)
-    print(f"[s3sg] identity init: s0={s0:.3f} t0={np.round(t0, 2)}")
-    result = align_from(s0, np.eye(3), t0)
-    init_used = "identity"
-    if result is not None:
-        print(f"[s3sg] identity path: global rms={result['global_rms']:.3f} "
-              f"cm  face rms={result['face_rms']:.3f} cm  front-depth mean="
-              f"{result['fd_mean']:.3f} cm (miss {result['fd_miss']})")
-
-    # ---- fallback: 24-rotation coarse sweep, only if identity fails the
-    # front-depth criterion
-    if result is None or result["fd_mean"] > args.max_front_err \
-            or result["fd_miss"] > 0:
-        print("[s3sg] identity init unsatisfying -- trying 24-rotation sweep")
-        mu_s, mu_t = src.mean(0), tgt_head.mean(0)
-        sig_s = float(np.linalg.norm(src - mu_s, axis=1).mean())
-        sig_t = float(np.linalg.norm(tgt_head - mu_t, axis=1).mean())
-        s0s = sig_t / max(sig_s, 1e-12)
-        best = None
-        for ci, R0 in enumerate(proper_rotations_24()):
-            t_init = mu_t - s0s * (R0 @ mu_s)
-            s_c, R_c, t_c, rms_c, _ = icp_trimmed(
-                src_c, tgt_head, tree, s0s, R0, t_init,
-                iters=args.coarse_iters, trim=0.30)
-            if best is None or rms_c < best[0]:
-                best = (rms_c, s_c, R_c, t_c, ci)
-        rms_c, s_b, R_b, t_b, ci = best
-        print(f"[s3sg] sweep coarse best: candidate #{ci} rms={rms_c:.3f} cm")
-        res_b = align_from(s_b, R_b, t_b)
-        if res_b is not None:
-            print(f"[s3sg] sweep path: front-depth mean={res_b['fd_mean']:.3f}"
-                  f" cm (miss {res_b['fd_miss']})")
-        if result is None or (res_b is not None
-                              and res_b["fd_mean"] < result["fd_mean"]):
-            result, init_used = res_b, f"sweep#{ci}"
-    if result is None:
-        die("no alignment path produced a usable transform")
-
-    s_f, R_f, t_f = result["s"], result["R"], result["t"]
-    inlier_rms = result["global_rms"]
-    n_face_pairs, face_rms = result["n_pairs"], result["face_rms"]
-    d_all, _ = tree.query(s_f * (src @ R_f.T) + t_f, workers=-1)
-    median_nn = float(np.median(d_all))
-    print(f"[s3sg] chosen init: {init_used}  scale={s_f:.4f}  "
-          f"face polish pairs={n_face_pairs} rms={face_rms:.3f} cm")
-
-    # ---- final metrics on the full transform
-    v_aligned = s_f * (v_raw @ R_f.T) + t_f
-    # reverse direction: TripoSR sample -> aligned SG surface
+    # ---- final metrics ----------------------------------------------------
     tree_sg = cKDTree(v_aligned)
-    rev_idx = rng.choice(len(tgt_v), min(20000, len(tgt_v)), replace=False)
-    d_rev, _ = tree_sg.query(tgt_v[rev_idx], workers=-1)
-    median_rev = float(np.median(d_rev))
+    tgt_npz = od / "clay_aligned.npz"
+    median_rev = None
+    if tgt_npz.is_file():
+        sr_v = np.load(tgt_npz)["verts"].astype(np.float64)
+        rev_idx = rng.choice(len(sr_v), min(20000, len(sr_v)), replace=False)
+        d_rev, _ = tree_sg.query(sr_v[rev_idx], workers=-1)
+        median_rev = float(np.median(d_rev))
 
-    # face gate: the fitted ICT landmark verts must lie ON the aligned
-    # surface. INNER landmarks (brows/nose/eyes/mouth, iBUG 17-67) gate;
-    # the jaw CONTOUR (0-16) may sit under hair -> report only.
     d_lmk, _ = tree_sg.query(fitted[lmk_verts], workers=-1)
     inner_mean = float(d_lmk[17:].mean())
     inner_max = float(d_lmk[17:].max())
     contour_mean = float(d_lmk[:17].mean())
 
-    # direction-aware front-depth check at the inner landmarks
     fd_err, fd_miss = front_depth_errors(fitted[lmk_verts[17:]], v_aligned)
     fd_mean = float(fd_err.mean()) if len(fd_err) else np.inf
     fd_max = float(fd_err.max()) if len(fd_err) else np.inf
@@ -382,19 +250,15 @@ def main():
     ext_ict = fitted[:11248].max(0) - fitted[:11248].min(0)
     y_ratio = float(ext_sg[1] / max(ext_ict[1], 1e-9))
 
-    print(f"[s3sg] metrics: global inlier_rms={inlier_rms:.3f} cm  median_nn="
-          f"{median_nn:.3f} cm  median_rev={median_rev:.3f} cm")
     print(f"[s3sg] landmarks -> SG surface: inner mean={inner_mean:.3f} cm "
           f"max={inner_max:.3f} cm  contour mean={contour_mean:.3f} cm")
     print(f"[s3sg] front-depth @inner landmarks: mean={fd_mean:.3f} cm "
           f"max={fd_max:.3f} cm  missing={fd_miss}/51")
     print(f"[s3sg] aligned bbox extent={np.round(ext_sg, 2)} cm "
-          f"(ICT head y-extent ratio {y_ratio:.2f})")
+          f"(ICT head y-extent ratio {y_ratio:.2f})"
+          + (f"  median SR->SG dist={median_rev:.2f} cm" if median_rev else ""))
 
     failures = []
-    if inlier_rms > args.max_rms:
-        failures.append(f"global ICP inlier RMSE {inlier_rms:.3f} cm > "
-                        f"{args.max_rms} cm")
     if inner_mean > args.max_face_dist:
         failures.append(f"inner-landmark->SG-surface mean {inner_mean:.3f} cm "
                         f"> {args.max_face_dist} cm -- the FACE did not register")
@@ -409,29 +273,27 @@ def main():
         failures.append(f"aligned SG y-extent ratio {y_ratio:.2f} is insane")
 
     info = {
-        "method": "slab-strip + identity-init trimmed ICP vs SR head band "
-                  "(24-rot sweep fallback, chosen by front-depth) + rigid "
-                  "face-polish vs fitted ICT face",
-        "target_npz": str(tgt_npz),
-        "init_used": init_used,
+        "method": "slab-strip + landmark-umeyama (s3a_align_clay --prefix "
+                  "clay_sg, grey render) + rigid face-polish vs fitted ICT face",
+        "landmark_align": {k: base_info[k] for k in
+                           ("up", "azim_deg", "n_landmarks_used",
+                            "n_kept_after_trim", "residual_rms_cm",
+                            "residual_max_cm") if k in base_info},
         "slab_strip": strip_info,
-        "front_depth_mean_cm": fd_mean,
-        "front_depth_max_cm": fd_max,
-        "front_depth_missing": int(fd_miss),
-        "trim": args.trim,
-        "global_inlier_rms_cm": inlier_rms,
-        "median_nn_cm": median_nn,
-        "median_rev_cm": median_rev,
-        "face_polish_pairs": n_face_pairs,
+        "face_polish_pairs": n_pairs,
         "face_polish_inlier_rms_cm": face_rms,
         "lmk_inner_to_surface_mean_cm": inner_mean,
         "lmk_inner_to_surface_max_cm": inner_max,
         "lmk_contour_to_surface_mean_cm": contour_mean,
+        "front_depth_mean_cm": fd_mean,
+        "front_depth_max_cm": fd_max,
+        "front_depth_missing": int(fd_miss),
+        "median_rev_cm": median_rev,
         "y_extent_ratio_vs_ict": y_ratio,
-        "S": float(s_f), "R": R_f.tolist(), "T": np.asarray(t_f).tolist(),
+        "S": S, "R": R.tolist(), "T": np.asarray(T).tolist(),
         "clay_verts": int(len(v_aligned)), "clay_faces": int(len(faces)),
-        "gates": {"max_rms_cm": args.max_rms,
-                  "max_face_dist_cm": args.max_face_dist},
+        "gates": {"max_face_dist_cm": args.max_face_dist,
+                  "max_front_err_cm": args.max_front_err},
         "gates_passed": not failures,
         "failures": failures,
     }

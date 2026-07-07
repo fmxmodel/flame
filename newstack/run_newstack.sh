@@ -119,7 +119,7 @@ if want 3; then
     if [ "$CLAY_SOURCE" = "triposg" ]; then
       # shellcheck disable=SC2086
       log_run s3sg "$PY" "$PIPE/s3a_align_triposg.py" \
-          --clay-sg "$CLAY_SG" --out "$OUT" $S3SG_ARGS
+          --clay-sg "$CLAY_SG" --task "$MP_TASK" --out "$OUT" $S3SG_ARGS
       # shellcheck disable=SC2086
       log_run s3b blender_run "$PIPE/s3b_refine_blender.py" --out "$OUT" \
           --clay-npz "$OUT/clay/clay_sg_aligned.npz" $S3B_SG_FLAGS $S3B_ARGS
