@@ -250,10 +250,11 @@ def main():
 
             m_pre = np.zeros(len(fitted))
             m_pre[:EXTERIOR_END] = prot[:EXTERIOR_END]
-            m_sw = m_pre * face_mask
             m_pre = smooth_field(m_pre, edges, 5, 0.5)
-            m_sw = smooth_field(m_sw, edges, 5, 0.5)
             m_pre[EXTERIOR_END:] = 0.0          # interior stays EXACTLY put
+            # face_mask is smooth by construction (smoothstep over distance);
+            # do NOT re-smooth m_sw or it leaks past the feather onto the back
+            m_sw = m_pre * face_mask
             m_sw[EXTERIOR_END:] = 0.0
         else:
             # ---- legacy mask: regions + feature protection (TripoSR path)

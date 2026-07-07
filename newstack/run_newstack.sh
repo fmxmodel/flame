@@ -61,7 +61,10 @@ S5_ARGS=${S5_ARGS:-}         # e.g. "--no-expression"
 # takes the TripoSG shape (weight 1.0, feathered to 0 over head/neck), the
 # cranium/back stays clean ICT; bbox volume-match (prescale) closes the
 # bald-ICT vs haired-clay size gap first. Overridable via S3B_ARGS (last wins).
-S3B_SG_FLAGS="--weights face --prescale xyz
+# prescale=yz (NOT x): the x factor is hair-width driven and inflates the jaw
+# sideways into the hair shell (measured +2.4cm at the jaw contour -> 84px
+# contour reprojection); y/z close the volume gap without lateral face drift.
+S3B_SG_FLAGS="--weights face --prescale yz
   --clay-smooth-iters 6 --clay-smooth-factor 0.4
   --smooth-iters 6 --smooth-lam 0.5
   --protect-r0 1.0 --protect-r1 2.5 --nose-r0 0.3 --nose-r1 1.0"

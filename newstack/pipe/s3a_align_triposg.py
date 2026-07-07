@@ -10,6 +10,13 @@ head, SAME photo, similar shape -- is already expressed in ICT space (cm,
 +Y up, +Z front) by s3a_align_clay.py. TripoSG then only needs a similarity
 transform onto that surface:
 
+  0. CLEANUP: TripoSG reconstructs the photo's BACKGROUND WALL as a huge
+     flat slab fused to the person (79%-of-faces component spans the full
+     bbox) plus ~230 floating confetti shards. The slab is detected as the
+     dominant area-weighted normal direction + the strongest planar-offset
+     peak; its faces are stripped, then the largest connected component is
+     kept. Without this the ICP centroid/scale/trim are all poisoned
+     (measured: it locked 90 degrees off);
   1. coarse init sweep: 24 proper axis-permutation rotations x centroid +
      RMS-radius scale, each scored by a short trimmed ICP (TripoSG is
      ~[-1,1]-normalized with its own axis convention -- scale AND orientation
@@ -29,9 +36,11 @@ transform onto that surface:
 GATED (dies loudly, never ships a mis-aligned clay):
   - trimmed inlier RMSE  <= --max-rms cm  (global fit)
   - fitted-ICT INNER-face landmark verts (brows/nose/eyes/mouth, iBUG 17-67)
-    -> aligned-SG-surface mean distance <= --max-face-dist cm  (the face MUST
-    register; the jaw CONTOUR may legitimately sit under hair and is only
-    reported)
+    -> aligned-SG-surface mean distance <= --max-face-dist cm
+  - FRONT-DEPTH gate (direction-aware -- nearest-vertex distance alone lets
+    a big enveloping blob pass in the WRONG pose): for every inner landmark,
+    the front-most SG surface directly above its (x,y) must exist and its z
+    must match the fitted landmark z to --max-front-err cm on average
   - aligned bbox y-extent within sane ratio of the fitted ICT head.
 Artifacts are saved BEFORE the gates fire so a failure can be inspected.
 
@@ -68,6 +77,59 @@ def proper_rotations_24():
                 mats.append(M)
     assert len(mats) == 24
     return mats
+
+
+def strip_background_slab(v, f, eps=0.05, ang_deg=25.0):
+    """Remove the reconstructed background wall + confetti from a TripoSG
+    mesh. Returns (verts, faces, info). Raw (pre-alignment) units.
+
+    Slab detection: dominant direction of the area-weighted normal outer-
+    product (a wall concentrates area in ONE +-direction; a head spreads it
+    over the sphere), then the strongest histogram peak of vertex offsets
+    along that direction among wall-normal faces. Faces in that plane band
+    with matching normals are dropped; largest connected component kept."""
+    import trimesh
+    m = trimesh.Trimesh(vertices=v, faces=f, process=False)
+    fn = m.face_normals
+    fa = m.area_faces
+    M = (fn * fa[:, None]).T @ fn                  # 3x3 direction mass
+    w_, V_ = np.linalg.eigh(M)
+    n = V_[:, -1]                                  # dominant unsigned normal
+    cos_lim = np.cos(np.radians(ang_deg))
+    wallish = np.abs(fn @ n) > cos_lim
+    cen = v[f].mean(axis=1)                        # face centroids
+    proj = cen @ n
+    hist, edges_ = np.histogram(proj[wallish], bins=200,
+                                weights=fa[wallish])
+    d_star = 0.5 * (edges_[np.argmax(hist)] + edges_[np.argmax(hist) + 1])
+    slab = wallish & (np.abs(proj - d_star) < eps)
+    m.update_faces(~slab)
+    comps = m.split(only_watertight=False)
+    if not len(comps):
+        die("slab strip removed everything -- eps/angle too aggressive")
+    main_c = max(comps, key=lambda c: len(c.faces))
+    info = {"slab_normal": np.round(n, 4).tolist(),
+            "slab_offset": float(d_star),
+            "slab_faces_removed": int(slab.sum()),
+            "components_after_strip": int(len(comps)),
+            "kept_faces": int(len(main_c.faces)),
+            "kept_verts": int(len(main_c.vertices))}
+    return (np.asarray(main_c.vertices, dtype=np.float64),
+            np.asarray(main_c.faces, dtype=np.int64), info)
+
+
+def front_depth_errors(fitted_lmk, sg_v, rad=0.6):
+    """Direction-aware registration check: for each landmark point, the
+    front-most (max z) SG vertex within +-rad cm in (x,y) is compared to the
+    landmark's z. Returns (|dz| per covered landmark, n_missing)."""
+    errs, miss = [], 0
+    for p in fitted_lmk:
+        m = (np.abs(sg_v[:, 0] - p[0]) < rad) & (np.abs(sg_v[:, 1] - p[1]) < rad)
+        if not m.any():
+            miss += 1
+            continue
+        errs.append(abs(float(sg_v[m, 2].max()) - float(p[2])))
+    return np.asarray(errs), miss
 
 
 def rigid_fit(src, dst):
@@ -124,6 +186,11 @@ def main():
                     help="cm; GATE on trimmed inlier RMSE (global fit)")
     ap.add_argument("--max-face-dist", type=float, default=1.0,
                     help="cm; GATE on mean INNER-landmark->SG-surface distance")
+    ap.add_argument("--max-front-err", type=float, default=1.2,
+                    help="cm; GATE on mean front-depth error at inner landmarks")
+    ap.add_argument("--slab-eps", type=float, default=0.05,
+                    help="raw units; plane-band half-width for slab removal")
+    ap.add_argument("--no-slab-strip", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
     t0 = time.time()
@@ -147,6 +214,17 @@ def main():
         die(f"TripoSG clay {args.clay_sg} has NO faces")
     print(f"[s3sg] TripoSG clay: {len(v_raw)} v / {len(faces)} f  "
           f"extent={np.round(v_raw.max(0) - v_raw.min(0), 2)}")
+
+    strip_info = {}
+    if not args.no_slab_strip:
+        v_raw, faces, strip_info = strip_background_slab(
+            v_raw, faces, eps=args.slab_eps)
+        print(f"[s3sg] slab strip: removed {strip_info['slab_faces_removed']} "
+              f"wall faces (n={strip_info['slab_normal']}, "
+              f"d={strip_info['slab_offset']:.3f}), kept largest of "
+              f"{strip_info['components_after_strip']} comps -> "
+              f"{strip_info['kept_verts']} v / {strip_info['kept_faces']} f  "
+              f"extent={np.round(v_raw.max(0) - v_raw.min(0), 2)}")
 
     rng = np.random.default_rng(args.seed)
     src = v_raw[rng.choice(len(v_raw), min(args.n_src, len(v_raw)), replace=False)]
@@ -227,6 +305,11 @@ def main():
     inner_max = float(d_lmk[17:].max())
     contour_mean = float(d_lmk[:17].mean())
 
+    # direction-aware front-depth check at the inner landmarks
+    fd_err, fd_miss = front_depth_errors(fitted[lmk_verts[17:]], v_aligned)
+    fd_mean = float(fd_err.mean()) if len(fd_err) else np.inf
+    fd_max = float(fd_err.max()) if len(fd_err) else np.inf
+
     ext_sg = v_aligned.max(0) - v_aligned.min(0)
     ext_ict = fitted[:11248].max(0) - fitted[:11248].min(0)
     y_ratio = float(ext_sg[1] / max(ext_ict[1], 1e-9))
@@ -235,6 +318,8 @@ def main():
           f"{median_nn:.3f} cm  median_rev={median_rev:.3f} cm")
     print(f"[s3sg] landmarks -> SG surface: inner mean={inner_mean:.3f} cm "
           f"max={inner_max:.3f} cm  contour mean={contour_mean:.3f} cm")
+    print(f"[s3sg] front-depth @inner landmarks: mean={fd_mean:.3f} cm "
+          f"max={fd_max:.3f} cm  missing={fd_miss}/51")
     print(f"[s3sg] aligned bbox extent={np.round(ext_sg, 2)} cm "
           f"(ICT head y-extent ratio {y_ratio:.2f})")
 
@@ -245,13 +330,24 @@ def main():
     if inner_mean > args.max_face_dist:
         failures.append(f"inner-landmark->SG-surface mean {inner_mean:.3f} cm "
                         f"> {args.max_face_dist} cm -- the FACE did not register")
+    if fd_miss > 0:
+        failures.append(f"{fd_miss} inner landmarks have NO SG surface above "
+                        "them (wrong pose or missing face)")
+    if fd_mean > args.max_front_err:
+        failures.append(f"front-depth mean {fd_mean:.3f} cm > "
+                        f"{args.max_front_err} cm -- face surface is not where "
+                        "the fitted face is (pose/scale wrong)")
     if not (0.5 <= y_ratio <= 2.0):
         failures.append(f"aligned SG y-extent ratio {y_ratio:.2f} is insane")
 
     info = {
-        "method": "icp-to-aligned-triposr (24-rot coarse init + trimmed "
-                  "umeyama ICP) + face-polish ICP vs fitted ICT face",
+        "method": "slab-strip + icp-to-aligned-triposr (24-rot coarse init + "
+                  "trimmed umeyama ICP) + rigid face-polish vs fitted ICT face",
         "target_npz": str(tgt_npz),
+        "slab_strip": strip_info,
+        "front_depth_mean_cm": fd_mean,
+        "front_depth_max_cm": fd_max,
+        "front_depth_missing": int(fd_miss),
         "coarse_candidate": int(ci),
         "coarse_rms_cm": float(rms_c),
         "fine_iters_run": int(it_f),
