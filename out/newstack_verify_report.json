@@ -5,10 +5,16 @@
   "warns": [],
   "info": {
     "expected_supported": 52,
-    "glb_bytes": 11221496,
-    "position_count": 28716,
-    "note_splits": "POSITION 28716 > 26719: exporter split verts at UV seams (expected, benign)",
+    "glb_bytes": 11224492,
+    "primitive_count": 3,
+    "position_counts": [
+      9409,
+      3440,
+      15107
+    ],
     "morph_target_count": 52,
+    "position_count": 27956,
+    "note_splits": "POSITION 27956 >= 26719: exporter split verts at UV seams / material boundaries (expected, benign)",
     "target_names": [
       "browDownLeft",
       "browDownRight",
@@ -63,6 +69,29 @@
       "noseSneerRight",
       "tongueOut"
     ],
-    "images": 1
+    "images": 2,
+    "materials": [
+      {
+        "name": "HeadMat",
+        "alphaMode": "OPAQUE",
+        "doubleSided": true,
+        "textured": true,
+        "vertex_colored": true
+      },
+      {
+        "name": "EyeMat",
+        "alphaMode": "OPAQUE",
+        "doubleSided": true,
+        "textured": true,
+        "vertex_colored": true
+      },
+      {
+        "name": "RestMat",
+        "alphaMode": "OPAQUE",
+        "doubleSided": true,
+        "textured": false,
+        "vertex_colored": true
+      }
+    ]
   }
 }

@@ -68,7 +68,27 @@ newARC/
     same session) and TripoSR stays the s5 color source.
 
 ## In progress / next
-- [x] **s5 texture bake FIX authored** (pending pod re-run) — winding was inverted for ICT topology → dark central face. Now **measures** the camera-facing sign (like `recon/bake_texture.py`), rejects grazing texels + X-mirror fallback, exterior-priority UV rasterization so interior islands can't steal face texels, and a `central_face` sanity gate in `bake_metrics.json`. Verify `winding.facing_sign` + `central_face.pass` after re-run.
+- [x] **s5 360° texture rework** (run + verified on pod, TripoSG geometry) — the back/sides now read as
+  HAIR, not pale grey clay, with no backdrop "bonnet" and no second face:
+  - **Person mask** (procedural: border-median flood fill from top/left/right, erode 3px + feather σ2):
+    photo samples must land ON the subject — silhouette-grazing texels used to paint the white backdrop
+    onto the scalp/sides. Applied to projection, mirror fallback and vertex colors alike.
+  - **TripoSR fill**: k-NN (8) inverse-distance color sampling from the aligned clay + per-channel
+    affine palette match (residual-trimmed LSQ on 614k photo∩clay texels) → TripoSR's washed palette
+    lands on the photo's palette, so the hairline/jaw feather (`w_photo` = N·V smoothstep × soft mask)
+    has no color step.
+  - **Hair zone** (crown above the landmark-measured hairline + everything above ear level behind the
+    temple plane): MEASURED, TripoSR hallucinates the hidden crown desaturated grey-beige with inverted
+    chroma (unfixable by any fitted transfer), so there the palette comes from the MEASURED photo hair
+    (20–50% luminance band of visible cap texels; 55,690 pairs → [0.52,0.37,0.29] mid-brown) and TripoSR
+    contributes only luminance variation. Bald subjects self-correct (visible cap = skin then).
+  - Fill feeds BOTH tile-0 albedo and `vertex_colors.npy` (RestMat scalp/back). RestMat roughness
+    0.9 (specular sheen at 0.6 read as "pale plastic"). Metrics: `back_region.triposr_frac = 1.0`,
+    `vertex_fill.head_neck` = 96.7% triposr / 3.3% honest default (neck below clay coverage),
+    `sources_frac`, `person_mask`, `clay_match`, `cap_match`. s7 PASS (52/52, OPAQUE, doubleSided).
+    Proof renders `out/renders/glb_{front,profile,back}_full.png` + eyes/gaze/tongue; measured back
+    pixels are warm browns (105–169 R), zero default texels on the back region.
+- [x] **s5 texture bake FIX authored** (verified on pod) — winding was inverted for ICT topology → dark central face. Now **measures** the camera-facing sign (like `recon/bake_texture.py`), rejects grazing texels + X-mirror fallback, exterior-priority UV rasterization so interior islands can't steal face texels, and a `central_face` sanity gate in `bake_metrics.json`. Verified: `winding.facing_sign` measured, `central_face.pass` true (photo_frac 0.95).
 - [x] **tongueOut → 52/52** — CODED (pending pod re-run of s4+): `tongue_synth.py` selects the tongue
   from ICT's real static geometry (region `[14062:17039)` verts with cKDTree distance-to-nearest-tooth
   `[17039:21451)` > 1.0 cm, no hardcoded ids), pushes the tip `+4.5 cm` forward (`smoothstep**1.5`
