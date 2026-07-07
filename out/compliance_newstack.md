@@ -2,7 +2,11 @@
 
 **Gate:** Licensing / Compliance (blocking authority)
 **Run intent:** Track B — COMMERCIAL (single photo → ARKit-52 GLB → browser-driven).
-**Verified:** 2026-07-05 (all terms re-checked live this run; licenses change — re-verify next run).
+**Verified:** 2026-07-05 (initial live check) → **re-verified LIVE 2026-07-07 (FINAL SHIP GATE)**.
+**Status of this document:** FINAL. The four previously-conditional build items are resolved in the
+"FINAL SHIP GATE (2026-07-07)" section at the bottom; the shipped-artifact notices are now wired
+(`out/viewer/public/THIRD-PARTY-NOTICES.md` + `public/licenses/`). All terms re-checked live;
+licenses change — re-verify next run.
 **Supersedes:** the FLAME-based B1 clearance in `out/compliance_report.md`. FLAME / MPI texture
 are **dropped** from the commercial path (see Dropped Set below). This document is the current
 commercial gate of record.
@@ -146,21 +150,85 @@ by the pivot.
 
 ---
 
+## FINAL SHIP GATE (2026-07-07) — re-verified live, per shipped artifact
+
+This is the final commercial gate on the actually-shipped artifacts:
+`out/head_arkit_v2.glb` (the avatar) + `out/viewer/dist/` (the three.js + MediaPipe web app).
+The distinction that drives every verdict: **CODE / WEIGHTS / OUTPUT** licenses are checked
+separately, and **redistributed** components are separated from **build-only** components.
+
+### Per-component FINAL verdict (code / weights / output, for COMMERCIAL use)
+
+| Component | Ships in `dist/`? | CODE | WEIGHTS/MODEL | OUTPUT | Commercial verdict |
+|---|---|---|---|---|---|
+| **three.js 0.170.0** | ✅ bundled JS | MIT | n/a | n/a | **OK** |
+| **@mediapipe/tasks-vision** (WASM runtime) | ✅ `mediapipe/wasm/*` | Apache-2.0 | n/a | n/a | **OK** |
+| **MediaPipe `face_landmarker.task`** | ❌ loaded from Google CDN at runtime (also used at build s1) | Apache-2.0 | Apache-2.0 (BlazeFace + FaceMesh V2 + Blendshape V2 model cards) | unrestricted | **OK** |
+| **ICT-FaceKit (Light)** | data baked into GLB | MIT © 2020 USC-ICT | MIT (same repo) | MIT (derived geometry) | **OK — Light only** |
+| **TripoSR** | ❌ build-only; clay retopologized away | MIT | MIT © 2024 Tripo AI & Stability AI (HF card `license: mit`) | n/a (not in GLB) | **OK** |
+| **rembg + U²-Net (`u2net`)** | ❌ build-only; mask not in GLB | rembg MIT | U²-Net Apache-2.0 (`xuebinqin/U-2-Net`) | n/a (transient mask) | **OK — pin `u2net`** |
+| **PyTorch3D / OpenCV / transformers / torch** | ❌ build-only | BSD-3 / Apache-2.0 / Apache-2.0 / BSD-3 | — | — | **OK (tools)** |
+| **Blender 4.2.3 (`bpy`)** | ❌ build-only; **no binary in `dist/` (measured)** | GPL | — | GLB is generated data, not a Blender derivative | **OK (server tool)** |
+| **Draco** | ❌ **not used / not shipped (measured)** | — | — | — | **n/a** — not a dependency |
+
+### Resolution of the four previously-conditional build items
+
+1. **rembg pinned to `u2net` (Apache-2.0)** — **RESOLVED (standing invariant).** U²-Net weights
+   re-confirmed Apache-2.0 live (`raw.githubusercontent.com/xuebinqin/U-2-Net/master/LICENSE` is the
+   Apache-2.0 template). Commercial-clean. Must remain pinned; `isnet-*`/`silueta`/Bria RMBG
+   (CC-BY-NC) are NOT cleared. → **conditional(keep `u2net` pinned).**
+2. **ICT-FaceKit *Light* only** — **RESOLVED (standing invariant).** LICENSE re-confirmed live: MIT,
+   "Copyright (c) 2020 USC Institute for Creative Technologies"; README confirms the **Full** model is
+   a "different USC specific license." The shipped GLB derives from the Light model. → **OK; the Full
+   model must never be pulled — conditional(Light only).**
+3. **Ship no Blender/bpy binary** — **RESOLVED (measured).** `dist/` contains only the three.js
+   bundle, the GLB, the MediaPipe WASM runtime, `licenses/*.txt`, `index.html`, `README.txt`, and
+   `THIRD-PARTY-NOTICES.md` — **no `bpy`/Blender/Python binary, no `.so`/`.dll`.** GPL does not reach
+   the deliverable. → **OK.** (Standing: do not redistribute the pod image / Blender build.)
+4. **THIRD-PARTY-NOTICES wired in-product** — **RESOLVED (done this run).** Stale FLAME-era notices
+   replaced with the actual shipped deps: three.js MIT, `@mediapipe/tasks-vision` Apache-2.0 (WASM
+   redistributed; §4(d) NOTICE not triggered — upstream ships none), the FaceLandmarker model
+   Apache-2.0 (CDN-loaded), and GLB provenance (ICT-FaceKit MIT © USC-ICT 2020, TripoSR MIT,
+   rembg/U²-Net, user's own photo). Per-license texts added under `public/licenses/`
+   (`ict-facekit-MIT-LICENSE.txt`, `triposr-MIT-LICENSE.txt`, `u2net-Apache-2.0-NOTICE.txt`;
+   `mediapipe-*`, `three.js-*` retained). In-app **Credits / Licenses** panel already new-stack-correct.
+
+### The "one open commercial question" (TripoSR weights) — CLOSED
+TripoSR weights re-verified **MIT** for both code and weights (HF `stabilityai/TripoSR` card metadata
+`license: mit`; repo `LICENSE` "Copyright (c) 2024 Tripo AI & Stability AI"). Training data is a
+"carefully curated **CC-BY** subset of Objaverse" (card) — the commercial-permissive slice; weights
+released MIT. **No NC weight/data hiding behind permissive code.** Whitewashing test **passes.**
+Belt-and-suspenders: TripoSR only shapes the throwaway clay that is **retopologized onto ICT**, so
+**no TripoSR-authored geometry survives into the GLB** — even a future TripoSR swap would not touch
+the ICT output topology, and licensing exposure from the clay generator is architecturally near-zero.
+
+### Whitewashing sweep (permissive code hiding NC weights/data) — clean
+- **TripoSR:** MIT code AND MIT weights; training subset CC-BY (not NC). ✅ clean.
+- **U²-Net:** Apache-2.0 weights (trained on DUTS-TR academic set, but the owner released the weights
+  Apache-2.0). ✅ clean. (Contrast: **Bria RMBG-1.4/2.0** is CC-BY-NC — correctly excluded.)
+- **MediaPipe FaceLandmarker:** Apache-2.0 across BlazeFace + FaceMesh V2 + Blendshape V2 cards;
+  output unrestricted. ✅ clean.
+- **ICT-FaceKit Light:** MIT model in an MIT repo, no separate research-data license on the Light
+  model. ✅ clean. (The **Full** model would NOT be — excluded.)
+
+### No lawyer/EULA question in this stack
+The FLAME/MetaHuman/Epic-EULA lawyer questions were removed by the pivot away from FLAME and
+MetaHuman. There is no non-commercial component and no EULA-scope question in the active stack.
+
 ## Verdict
 
-All active components are commercially clearable. There is **no non-commercial component and no
-open lawyer/EULA question** in the active stack. Clearance is **conditional** only on mechanical
-config/attribution hygiene that is fully within this gate's authority to require — not on any
-outside legal opinion:
+All active components are commercially clearable. Clearance rests only on config/attribution hygiene
+fully within this gate's authority — **no outside legal opinion is required.** The shipped artifact
+satisfies all conditions as built (notices wired; no bpy binary in `dist/`; Light model; `u2net`).
+Two **standing invariants** must remain true for every future build:
 
-1. **Pin the rembg model to `u2net`** (Apache-2.0). Do not silently fall back to `isnet-*`/`silueta`.
-2. **Use only the ICT-FaceKit MIT *Light* model.** Never pull the *Full* USC model.
-3. **Ship no Blender/bpy binary** — server-side/SaaS use only.
-4. **Include the THIRD-PARTY-NOTICES** (MIT + Apache-2.0 attributions listed above) in-product.
+1. **Keep the rembg model pinned to `u2net`** (Apache-2.0) — never silently `isnet-*`/`silueta`/Bria.
+2. **Use only the ICT-FaceKit MIT *Light* model** — never the *Full* USC model.
+   (Plus the two already-satisfied standing constraints: ship no Blender/bpy binary or pod image;
+   keep the THIRD-PARTY-NOTICES in-product.)
 
-If and only if those four hold at build time, this stack is clean to ship commercially. If any
-fails (e.g. the recon agent points ICT at the Full model, or the mask default changes), this
-reverts to a hard stop.
+If any invariant regresses (recon points ICT at the Full model, mask default changes, or a
+Blender/bpy binary is bundled), this reverts to a **hard stop**.
 
-**NEWSTACK-SHIP-CLEARED: conditional** — clears to **yes** once items 1–4 above are confirmed at
-build; each is a config/notice action, none requires a lawyer.
+**NEWSTACK-SHIP-CLEARED: yes (conditional on the two standing invariants above, both currently
+satisfied).** No component is non-commercial; nothing is blocked; no lawyer question remains.

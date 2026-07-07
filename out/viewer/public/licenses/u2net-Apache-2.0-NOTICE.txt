@@ -1,0 +1,19 @@
+U^2-Net (u2net) pretrained weights — Apache License, Version 2.0
+Source: https://github.com/xuebinqin/U-2-Net
+Authors/Copyright: Xuebin Qin et al.
+Wrapper: rembg (MIT, (c) Daniel Gatis); rembg default model pinned to "u2net".
+
+Role: build-time only. U^2-Net removes the background from the input photo during
+reconstruction. The resulting mask is a transient intermediate; the U^2-Net weights
+are NOT redistributed and the mask is NOT present in the shipped GLB. This credit is
+a transparency courtesy, not a redistribution obligation.
+
+License: the U-2-Net repository LICENSE is the Apache License, Version 2.0 (the repo
+ships the standard Apache-2.0 template text). Commercial use is permitted. The full
+Apache License 2.0 text is identical to the copy bundled at
+  licenses/mediapipe-Apache-2.0-LICENSE.txt
+and is not duplicated here.
+
+Ship condition: keep the rembg model pinned to "u2net". Do NOT silently switch to
+isnet-general-use / isnet-anime / silueta (different dataset lineage) or to Bria
+RMBG (CC-BY-NC, commercial requires a paid BRIA agreement) without re-verifying.

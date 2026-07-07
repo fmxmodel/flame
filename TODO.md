@@ -79,7 +79,11 @@ newARC/
   slider (MediaPipe never emits it); prebuild gates the build; `npm run build` PASS. UI: webcam/
   video, smoothing, head-pose toggle, FPS, tongueOut + full manual sliders. Run: `cd out/viewer
   && npm install && npm run dev`.
-- [ ] Ship prep: THIRD-PARTY-NOTICES (rembg/U²-Net, TripoSR, ICT-FaceKit © USC-ICT 2020, MediaPipe, three.js, Draco)
+- [x] Ship prep: THIRD-PARTY-NOTICES (rembg/U²-Net, TripoSR, ICT-FaceKit © USC-ICT 2020, MediaPipe,
+  three.js) — rewritten for the actual shipped deps in `out/viewer/public/THIRD-PARTY-NOTICES.md`
+  (+ synced into `dist/`); per-license texts under `public/licenses/`. Draco is NOT used/shipped
+  (GLB is uncompressed, no DRACOLoader, no decoder in dist) — deliberately excluded. FINAL gate:
+  `out/compliance_newstack.md` → **NEWSTACK-SHIP-CLEARED: yes** (standing: pin `u2net`; ICT Light only).
 
 ## Decisions (don't re-litigate)
 - **"Hole in the back of the head" was NOT geometry** — it was Blender's glTF importer assigning

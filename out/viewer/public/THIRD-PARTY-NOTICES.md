@@ -1,77 +1,118 @@
-# Third-Party Notices — ARKit Avatar Viewer (Track B1, FLAME 2023 Open)
+# Third-Party Notices — ARKit Avatar Viewer (new stack: TripoSR + ICT-FaceKit)
 
-This web product (the rigged head `head_arkit.glb` + this three.js viewer, which loads and
-drives it with MediaPipe FaceLandmarker) redistributes and/or builds upon the third-party
-components listed below. Their required attributions, license texts, and notices are
-reproduced here and surfaced in-app via the **"Credits / Licenses"** panel.
+This web product is the rigged head **`head_arkit_v2.glb`** plus this **three.js + MediaPipe**
+viewer (the `dist/` bundle) that loads the GLB and drives its 52 ARKit blendshape morph targets
+live from a webcam. The third-party components it **redistributes** or that materially **shaped
+the shipped GLB** are listed below, with their required attributions and license texts, and are
+surfaced in-app via the **"Credits / Licenses"** panel.
 
-Verified against the shipped artifacts on 2026-07-04. Full verbatim license texts also ship
-alongside this file under `licenses/` (`licenses/mediapipe-Apache-2.0-LICENSE.txt`,
-`licenses/three.js-MIT-LICENSE.txt`).
+Verified against the actually-shipped `dist/` on **2026-07-07** (all licenses re-checked live this
+run; commercial gate of record: `out/compliance_newstack.md`). Full verbatim license texts also
+ship alongside this file under `licenses/`.
 
-> Scope note: this file covers the **shipped web product** — the GLB avatar and the browser
-> viewer. Pod-side *build tools* used only to produce the GLB (PyTorch3D, OpenCV, Blender) are
-> addressed in the last section as an explicit, recorded decision, not an omission.
-
----
-
-## 1. FLAME 2023 (Open) head model — CC-BY-4.0
-
-The 3D head geometry shipped in `head_arkit.glb` is derived from the **FLAME 2023 (Open)** head
-model, which is licensed under the **Creative Commons Attribution 4.0 International (CC-BY-4.0)**
-license. CC-BY-4.0 requires appropriate credit, a link to the license, and an indication that
-changes were made — all provided below and reproduced in the in-app Credits panel.
-
-**Attribution / credit (as displayed in-product):**
-
-> This product uses the FLAME 2023 (Open) head model by the Max Planck Institute for
-> Intelligent Systems, licensed under CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/).
-> The model was fit to an input image, re-textured, and rigged; these are modifications of the
-> original. FLAME: Tianye Li, Timo Bolkart, Michael J. Black, Hao Li, Javier Romero,
-> 'Learning a model of facial shape and expression from 4D scans,' ACM Transactions on Graphics
-> (SIGGRAPH Asia) 2017.
-
-- **License:** Creative Commons Attribution 4.0 International (CC-BY-4.0)
-- **License text / link:** https://creativecommons.org/licenses/by/4.0/
-- **Changes made (CC-BY-4.0 requires indicating modification):** the FLAME 2023 Open head model
-  was **fit to an input image, re-textured (per-subject image-baked albedo), and re-rigged with
-  52 ARKit-named blendshape morph targets**. These are modifications of the original model.
-- **Required citation (FLAME paper):** Tianye Li, Timo Bolkart, Michael J. Black, Hao Li,
-  Javier Romero. "Learning a model of facial shape and expression from 4D scans." *ACM
-  Transactions on Graphics (Proc. SIGGRAPH Asia)*, 2017.
-- **Source / model license page:** https://flame.is.tue.mpg.de/modellicense.html
-
-> Only the FLAME 2023 **Open** (CC-BY-4.0) shape/geometry release is used. The MPI FLAME
-> **texture/appearance** space (CC-BY-NC-SA-4.0, non-commercial) and standard/2019/2020 FLAME
-> (MPI academic, non-commercial) are **not** used in this product.
+> **Scope.** Two categories matter and are kept distinct:
+> 1. **Redistributed runtime code/binaries** in `dist/` — three.js (bundled JS) and the MediaPipe
+>    FaceLandmarker WASM runtime. These carry live attribution obligations and are honored below.
+> 2. **GLB provenance** — components used only on the build pod to *produce* `head_arkit_v2.glb`.
+>    Their code/binaries are **not** in `dist/`. Where a component's data is baked into the GLB
+>    (ICT-FaceKit topology + blendshapes), its attribution is honored as if required; where it is
+>    not (TripoSR clay is retopologized away; the rembg/U²-Net mask is a transient intermediate),
+>    the credit is a transparency courtesy. All are recorded so nothing reads as a missed notice.
+>
+> The avatar's **face texture is baked from the end user's own input photo** — it carries no
+> third-party image rights.
 
 ---
 
-## 2. MediaPipe / `@mediapipe/tasks-vision` — Apache License 2.0
+# A. Redistributed runtime components (attribution required)
 
-The face-tracking runtime is Google's **MediaPipe** (`@mediapipe/tasks-vision`, v0.10.14). This
-product **redistributes MediaPipe binaries** — the FaceLandmarker WebAssembly runtime under
-`mediapipe/wasm/*` (`vision_wasm_internal.{js,wasm}`, `vision_wasm_nosimd_internal.{js,wasm}`)
-— so Apache-2.0 §4(a) requires that a copy of the license accompany the distribution. It is
-bundled below and at `licenses/mediapipe-Apache-2.0-LICENSE.txt`.
+## A.1 three.js — MIT License
+
+The 3D viewer is built on **three.js** (`three@0.170.0`). three.js is bundled into the app's
+JavaScript (`assets/index-*.js`), and its MIT banner is preserved in that bundle
+(`Copyright 2010-2024 Three.js Authors`). Full text also at `licenses/three.js-MIT-LICENSE.txt`.
+
+- **Component:** three.js `three@0.170.0` (includes `examples/jsm/loaders/GLTFLoader.js`)
+- **Copyright:** © 2010–2024 three.js authors
+- **License:** MIT
+
+```
+The MIT License
+
+Copyright © 2010-2024 three.js authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+> **Draco note (measured, not assumed):** the GLB is **not** Draco-compressed
+> (`extensionsUsed: none`; no `KHR_draco_mesh_compression` on any primitive; generator
+> `Khronos glTF Blender I/O v4.2.70`) and the viewer loads it with a plain `GLTFLoader` — it never
+> imports or instantiates `DRACOLoader`, and **no Draco decoder (`.wasm`/`.js`) ships in `dist/`.**
+> Draco (Apache-2.0) is therefore **not a dependency of this product** and is intentionally not
+> listed as one. If a future build enables Draco compression, add the Draco Apache-2.0 NOTICE and
+> ship the decoder + its license before re-shipping.
+
+## A.2 MediaPipe `@mediapipe/tasks-vision` — Apache License 2.0
+
+Face tracking is Google's **MediaPipe** (`@mediapipe/tasks-vision@0.10.14`). This product
+**redistributes MediaPipe binaries** — the FaceLandmarker WebAssembly runtime under
+`mediapipe/wasm/*` (`vision_wasm_internal.{js,wasm}`, `vision_wasm_nosimd_internal.{js,wasm}`) — so
+Apache-2.0 §4(a) requires a copy of the license accompany the distribution. It is bundled below and
+at `licenses/mediapipe-Apache-2.0-LICENSE.txt`.
 
 - **Component:** MediaPipe Tasks Vision (FaceLandmarker) — `@mediapipe/tasks-vision@0.10.14`
 - **Copyright:** Copyright 2019–2024 The MediaPipe Authors (Google LLC), `mediapipe@google.com`
 - **License:** Apache License, Version 2.0
 - **Upstream source of this license text:** `google-ai-edge/mediapipe` repository `LICENSE`
   (https://github.com/google-ai-edge/mediapipe/blob/master/LICENSE) — the npm tarball for
-  `@mediapipe/tasks-vision` ships **no** LICENSE and **no** NOTICE file, so both were sourced
-  directly from the upstream repository.
+  `@mediapipe/tasks-vision` ships no LICENSE and no NOTICE, so both were sourced from upstream.
 
-**NOTICE-file status (Apache-2.0 §4(d)):** As of the 2026-07-04 verification, the upstream
-`google-ai-edge/mediapipe` repository ships an Apache-2.0 `LICENSE` file but **does not contain
-a separate `NOTICE` text file** (confirmed: repository root listing has no `NOTICE`; a
-repo-wide code search for a `NOTICE` file returned zero results). Because Apache-2.0 §4(d) only
-obligates redistribution of a NOTICE file *if the upstream Work includes one*, there is **no
-upstream NOTICE content to propagate** here. The §4(a) obligation (include a copy of the
-License) **is** met by bundling the full Apache-2.0 text below. The attribution above (copyright
-to The MediaPipe Authors / Google LLC) stands in for the customary NOTICE credit. **If a future
-MediaPipe release adds a NOTICE file, its contents must be reproduced here before re-shipping.**
+**NOTICE-file status (Apache-2.0 §4(d)):** as of the 2026-07-07 verification the upstream
+repository ships an Apache-2.0 `LICENSE` but **no separate `NOTICE` text file**. §4(d) only
+obligates propagation of a NOTICE *if the upstream Work includes one*, so there is no NOTICE content
+to reproduce. The §4(a) obligation (include a copy of the License) is met by bundling the full text
+below. The attribution above stands in for the customary NOTICE credit. **If a future MediaPipe
+release adds a NOTICE file, its contents must be reproduced here before re-shipping.**
+
+## A.3 MediaPipe FaceLandmarker model (`face_landmarker.task`) — Apache License 2.0
+
+The FaceLandmarker **model bundle** (`float16/1/face_landmarker.task`) produces the 468 landmarks +
+52 ARKit-named blendshape coefficients that drive the avatar. In the shipped `dist/` this model is
+**loaded at runtime from the Google CDN**
+(`https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`)
+and is **not redistributed** in the bundle (no `.task` file ships; `npm run fetch-model` is
+optional and was not used for this build). The same model is also used at **build time** (stage s1,
+photo landmarks/iris). Its license still governs commercial **use** and its **output**:
+
+- **License (all three sub-models):** Apache License, Version 2.0.
+  - **FaceDetector — MediaPipe BlazeFace (Short Range)** model card: "LICENSED UNDER Apache
+    License, Version 2.0" (Google, dated 2021-06-09).
+  - **FaceMesh V2** model card: Apache License, Version 2.0.
+  - **Blendshape V2** model card ("A lightweight model to predict 52 facial blendshapes"): "LICENSED
+    UNDER Apache License, Version 2.0" (Google, dated 2022-11-11).
+- **Commercial use:** permitted (Apache-2.0). **Output (landmarks + blendshape coefficients):** no
+  license restriction; the Blendshape V2 card notes the coefficients "do not provide facial
+  recognition or identification and do not store any unique face representation."
+- **Out-of-scope (ethics guidance, not a license term):** the cards state the models are not for
+  human life-critical decisions and are not surveillance/identity tools. These are usage
+  expectations, not commercial-license restrictions.
+- **Obligation:** Apache-2.0 attribution to The MediaPipe Authors (Google), satisfied by A.2 above.
 
 ### Apache License 2.0 (full text, as shipped upstream by MediaPipe)
 
@@ -296,24 +337,37 @@ For files under tasks/cc/text/language_detector/custom_ops/utils/utf/
  */
 ```
 
-> The Lucent Technologies addendum above governs only text/language-detector UTF utilities
-> under `tasks/cc/text/...`; it is reproduced because it is part of MediaPipe's upstream
-> `LICENSE` file, even though those source files are not part of the FaceLandmarker vision
-> WASM this product actually ships.
+> The Lucent Technologies addendum above governs only text/language-detector UTF utilities under
+> `tasks/cc/text/...`; it is reproduced because it is part of MediaPipe's upstream `LICENSE` file,
+> even though those source files are not part of the FaceLandmarker vision WASM this product ships.
 
 ---
 
-## 3. three.js — MIT License
+# B. GLB provenance — components that shaped `head_arkit_v2.glb`
 
-The 3D viewer is built on **three.js** (`three@0.170.0`). The three.js code is bundled into the
-app's JavaScript (`assets/index-*.js`), and its MIT license banner is preserved in that bundle
-(`Copyright 2010-2024 Three.js Authors`). The full MIT notice is reproduced here and at
-`licenses/three.js-MIT-LICENSE.txt`.
+## B.1 ICT-FaceKit (Light / FaceXModel) — MIT, © 2020 USC Institute for Creative Technologies
+
+The shipped avatar's **head topology** and its **ARKit-aligned expression blendshapes** are derived
+from the **ICT Face Model (Light)** in `USC-ICT/ICT-FaceKit`. Because that geometry and the
+blendshape basis are **baked into `head_arkit_v2.glb`**, this attribution is honored as a live MIT
+obligation (retain the copyright + permission notice). Full text at
+`licenses/ict-facekit-MIT-LICENSE.txt`.
+
+- **Component:** ICT-FaceKit — **Light / FaceXModel only** (base topology, 100 PCA identity modes,
+  and the pre-authored ARKit-style expression blendshapes).
+- **Copyright / License:** Copyright (c) 2020 USC Institute for Creative Technologies — MIT License
+  (LICENSE: "ICT-FaceKit is released under the MIT license.").
+- **Source:** https://github.com/USC-ICT/ICT-FaceKit
+- **Changes made:** the Light model was fit to an input photo (identity coefficients), had hair and
+  head proportions shrink-wrapped toward a photo-derived clay, was re-textured from the user's photo,
+  and re-rigged/exported as a 52-morph GLB — these are modifications of the original.
+- **Hard scope constraint:** only the in-repo **Light** model is used. The **Full** ICT Face Model
+  ("will be released under a different USC specific license") is **not** used and is **not** cleared.
 
 ```
-The MIT License
+MIT License
 
-Copyright © 2010-2024 three.js authors
+Copyright (c) 2020 USC Institute for Creative Technologies
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -322,47 +376,88 @@ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
+## B.2 TripoSR — MIT, © 2024 Tripo AI & Stability AI (build-time; not in the GLB)
+
+TripoSR turns the single input photo into a rough head/hair **"clay"** that guides shrink-wrap for
+hair volume and proportions. **The clay is retopologized onto ICT geometry and does not survive into
+the shipped mesh** — no TripoSR-authored geometry is present in `head_arkit_v2.glb`, and TripoSR
+code/weights are not redistributed. This credit is a transparency courtesy, not a redistribution
+obligation. Full text at `licenses/triposr-MIT-LICENSE.txt`.
+
+- **Component:** TripoSR — `VAST-AI-Research/TripoSR` code + `stabilityai/TripoSR` weights.
+- **License:** MIT for **both code and weights** (repo LICENSE: "MIT License", "Copyright (c) 2024
+  Tripo AI & Stability AI"; Hugging Face model card metadata: `license: mit`).
+- **Training data:** "a carefully curated subset of the Objaverse dataset ... available under the
+  CC-BY license" (model card). Weights are the trained artifact, released MIT; no CC-BY attribution
+  flows downstream to this product. Courtesy credit: Objaverse (CC-BY) + Stability AI.
+
+## B.3 Background mask — rembg (MIT) + U²-Net weights (Apache-2.0) (build-time; not in the GLB)
+
+Background removal on the input photo. The mask is a transient build intermediate; neither the code
+nor the weights are redistributed, and the mask is not present in the GLB. Transparency courtesy:
+
+- **rembg:** MIT — `danielgatis/rembg` (© Daniel Gatis). Default model pinned to **`u2net`**.
+- **U²-Net (`u2net`) weights:** **Apache License, Version 2.0** — `xuebinqin/U-2-Net` (Xuebin Qin
+  et al.); the repo `LICENSE` is the Apache-2.0 template. Commercial use permitted. Same Apache-2.0
+  text as bundled at `licenses/mediapipe-Apache-2.0-LICENSE.txt`.
+- **Ship condition:** keep the rembg model pinned to `u2net`. Do **not** silently fall back to
+  `isnet-*`/`silueta` (different data lineage) or to Bria RMBG (CC-BY-NC) without re-verifying.
+
+## B.4 Face texture — the end user's own photo
+
+The avatar's albedo/texture is baked from the **user-supplied input photograph**. It contains no
+third-party imagery and carries no third-party license obligation; rights are the user's own.
+
 ---
 
-## 4. Pod-side build tools NOT redistributed (recorded decision, not an omission)
+# C. Pod-side build tools NOT redistributed (recorded decision, not an omission)
 
-The following components are used only on the reconstruction/rigging **pod** to *produce* the
-`head_arkit.glb` asset. They are **build tools**: their code and binaries are **not** included
-in, linked into, or delivered by the shipped web product (the GLB + this viewer). Under each
-license, the attribution/notice obligation is triggered by *redistribution* of that component's
-code or binary — which the shipped product does **not** do. Their notices are therefore
-**intentionally not required for this web product**, and this is recorded as an informed
-decision so it reads as deliberate scoping, not a missed attribution.
+These run only on the reconstruction/rigging pod to *produce* `head_arkit_v2.glb`. Their code and
+binaries are **not** in `dist/` (verified: `dist/` contains only the three.js bundle, the GLB, the
+MediaPipe WASM runtime, the two `licenses/*.txt`, `index.html`, `README.txt`, and this file — **no
+`bpy`/Blender/Python binary, no `.so`/`.dll`, no Draco decoder**). Under each license the
+attribution/notice trigger is *redistribution of that component's code/binary*, which the shipped
+product does not do.
 
-| Pod build tool | License | Notice required in the shipped web product? |
-|---|---|---|
-| **PyTorch3D** (fit/bake rasterization & cameras) | BSD-3-Clause | **No** — not redistributed; the BSD-3 copyright + disclaimer would be required only if PyTorch3D code/binaries were shipped. |
-| **OpenCV** (`opencv-python`; classical inpainting during texture bake) | Apache-2.0 | **No** — not redistributed; the Apache LICENSE + OpenCV NOTICE would be required only if OpenCV binaries were shipped (e.g. shipping the pod image). |
-| **Blender** (`bpy`; headless glTF/GLB assembly & export) | GPL | **No** — Blender is a build tool that *processes* data (like a compiler); its GPL does not reach the GLB output, and the Blender binary is **not** part of the shipped product. Do **not** redistribute the Blender binary as part of the web product. |
-
-**Trigger to revisit:** if the **pod image, pod pipeline code, or any of these binaries** is
-ever itself redistributed (as opposed to just its GLB output), the corresponding notices
-(PyTorch3D BSD-3, OpenCV Apache-2.0 LICENSE + NOTICE) must be added to that distribution.
-
----
-
-## Summary
-
-| Component | Role in shipped product | License | Obligation status |
+| Pod build tool | Role | License | Notice required in shipped product? |
 |---|---|---|---|
-| FLAME 2023 Open head model | 3D geometry in GLB | CC-BY-4.0 | Credit + license link + "changes made" + FLAME paper cite — **wired** (this file + in-app Credits panel) |
-| MediaPipe `@mediapipe/tasks-vision` | Face tracking; WASM binaries redistributed | Apache-2.0 | License text bundled (§4(a)); no upstream NOTICE exists (§4(d) not triggered) — **wired** |
-| three.js | Viewer/renderer; code bundled | MIT | Copyright + permission notice — **wired** (in-bundle banner + this file) |
-| PyTorch3D / OpenCV / Blender | Pod build tools; NOT shipped | BSD-3 / Apache-2.0 / GPL | Not required for the web product (recorded decision) |
+| **Blender 4.2.3** (`bpy`) | headless glTF/GLB assembly, shrink-wrap, deformation transfer, bake, export | **GPL** | **No** — Blender processes data like a compiler; its GPL does **not** reach the GLB (the GLB is generated data containing no Blender code), and **no Blender/bpy binary ships**. Do not redistribute the Blender/bpy build as part of the product. |
+| **PyTorch3D** | fit/bake rasterization, cameras, Umeyama alignment | BSD-3-Clause | **No** — not redistributed. |
+| **OpenCV** (`opencv-python`) | classical inpainting during texture bake | Apache-2.0 | **No** — not redistributed. |
+| **transformers** (Hugging Face) | TripoSR model plumbing | Apache-2.0 | **No** — not redistributed. |
+| **PyTorch** (`torch`/`torchvision`) | tensor/runtime for TripoSR + fit | BSD-3-Clause | **No** — not redistributed. |
+
+**Trigger to revisit:** if the **pod image, pod pipeline code, or any of these binaries** is ever
+itself redistributed (as opposed to only its GLB output), the corresponding notices — and for
+**Blender the GPL source-offer obligation** — must be added to that distribution.
+
+---
+
+# Summary
+
+| Component | Role in shipped product | License | Commercial | Obligation status |
+|---|---|---|---|---|
+| three.js `0.170.0` | viewer/renderer; JS bundled | MIT | ✅ | Copyright + permission notice — **wired** (in-bundle banner + this file + `licenses/`) |
+| `@mediapipe/tasks-vision` WASM | face tracking runtime; binaries redistributed | Apache-2.0 | ✅ | License text bundled (§4(a)); no upstream NOTICE (§4(d) n/a) — **wired** |
+| MediaPipe `face_landmarker.task` | landmarks + 52 blendshapes; loaded from Google CDN at runtime (not redistributed) | Apache-2.0 | ✅ | Attribution to The MediaPipe Authors — **wired**; output unrestricted |
+| ICT-FaceKit (Light) | head topology + ARKit blendshapes baked into GLB | MIT © 2020 USC-ICT | ✅ | Copyright + permission notice — **wired** (this file + `licenses/`); **Light only** |
+| TripoSR | build-time clay; retopologized away, not in GLB | MIT © 2024 Tripo AI & Stability AI | ✅ | Courtesy credit — **wired** (not a redistribution obligation) |
+| rembg + U²-Net (`u2net`) | build-time background mask; not in GLB | MIT / Apache-2.0 | ✅ | Courtesy credit — **wired**; pin `u2net` |
+| User photo texture | avatar albedo | user's own | ✅ | No third-party rights |
+| Draco | **not used / not shipped** (GLB uncompressed) | — | n/a | Intentionally not a dependency (measured) |
+| Blender / PyTorch3D / OpenCV / transformers / torch | pod build tools; NOT shipped | GPL / BSD-3 / Apache-2.0 | ✅ (as tools) | Not required for the web product (recorded decision) |
+
+Gate of record: `out/compliance_newstack.md` — **NEWSTACK-SHIP-CLEARED (conditional on the four
+build-time hygiene items).**

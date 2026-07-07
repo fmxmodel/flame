@@ -1,0 +1,31 @@
+TripoSR — MIT License
+Code:    https://github.com/VAST-AI-Research/TripoSR
+Weights: https://huggingface.co/stabilityai/TripoSR   (model card metadata: license: mit)
+Role:    build-time only. TripoSR produces a rough head/hair "clay" from the input
+         photo; that clay is retopologized onto ICT-FaceKit geometry and does NOT
+         survive into the shipped GLB. No TripoSR code/weights are redistributed.
+         This credit is a transparency courtesy, not a redistribution obligation.
+Training data: a carefully curated CC-BY subset of the Objaverse dataset (per the
+         model card). Courtesy credit: Objaverse (CC-BY) + Stability AI.
+
+MIT License
+
+Copyright (c) 2024 Tripo AI & Stability AI
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
