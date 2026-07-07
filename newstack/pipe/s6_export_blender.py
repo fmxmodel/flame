@@ -354,8 +354,11 @@ def main():
             rgba = np.concatenate(
                 [srgb_to_linear(vcol), np.ones((N_VERTS, 1))], axis=1)
             attr.data.foreach_set("color", rgba.astype(np.float32).ravel())
+            # roughness 0.9: the RestMat surface is mostly scalp hair/neck;
+            # MEASURED at 0.6 the specular sheen of the smooth per-vertex
+            # region rendered ~25% brighter + desaturated ("pale plastic")
             obj.data.materials.append(
-                make_opaque_vcol_material("RestMat", "Col", 0.6))
+                make_opaque_vcol_material("RestMat", "Col", 0.9))
             mat_idx[rest] = len(mat_names)
             mat_names.append("RestMat")
             print(f"[s6] RestMat (vertex colors) on {int(rest.sum())} "
