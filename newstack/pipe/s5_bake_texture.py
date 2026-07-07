@@ -351,10 +351,16 @@ def main():
         z_ear = float(lmk_pos[[0, 16], 2].mean())
 
         def hair_zone_w(p):
+            # crown above the hairline; plus everything above ear level that
+            # sits behind the temple plane (z gate keeps the face front out).
+            # The fill only ever shows where the photo cannot see (final =
+            # w_photo*photo + (1-w_photo)*fill), and hidden above-ear surface
+            # is hair on any subject that has hair -- bald self-corrects
+            # because the palette is measured from the visible cap.
             crown = smoothstep(p[:, 1], cap0, cap1)
-            skull_back = (smoothstep(z_ear - p[:, 2], 1.0, 3.0)
-                          * smoothstep(p[:, 1], y_ear, y_ear + 3.0))
-            return np.maximum(crown, skull_back)
+            above_ear = (smoothstep(p[:, 1], y_ear + 0.5, y_ear + 3.0)
+                         * smoothstep(z_ear + 3.0 - p[:, 2], 0.0, 2.0))
+            return np.maximum(crown, above_ear)
 
         LUM_W = np.array([0.299, 0.587, 0.114])
         cap_mu_p, cap_mu_lc = None, None
