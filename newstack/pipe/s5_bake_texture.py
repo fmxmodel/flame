@@ -364,7 +364,15 @@ def main():
                      & (w_cap > 0.5))
             n_cpair = int(cpair.sum())
             if n_cpair >= args.cap_min_pairs:
-                cap_mu_p = photo_col[cpair].mean(0)
+                # anchor the palette on the 20-50% luminance band of the
+                # visible cap: the photo's crown is lit from the front-top,
+                # so its MEAN is highlight-biased; the hidden scalp continues
+                # the hairline's base/shadow tone, not the highlight.
+                pc_pair = photo_col[cpair]
+                lum_p = pc_pair @ LUM_W
+                q20, q50 = np.quantile(lum_p, [0.2, 0.5])
+                band = (lum_p >= q20) & (lum_p <= q50)
+                cap_mu_p = pc_pair[band].mean(0)
                 lum = clay_raw @ LUM_W
                 cap_mu_lc = float(max(lum[cpair].mean(), 1e-6))
                 ratio = np.clip(lum / cap_mu_lc, 0.6, 1.4)
