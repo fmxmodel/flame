@@ -10,13 +10,25 @@ One diffuse map, no statistical/NC albedo prior:
           depth-passing texels (mirroring recon/bake_texture.py) -- never
           assumed from ICT's OBJ winding. Grazing texels (|cos| below
           --ndotv-lo) are REJECTED, not stretched.
-  BACK    TripoSR clay vertex colors (hair!) sampled at each texel's 3D
-          position via nearest clay vertex (KD-tree).
+  MASK    photo samples must land on the PERSON: the near-uniform backdrop is
+          detected procedurally (flood-fill by color distance to the border
+          median from the top/left/right image borders), eroded and feathered.
+          Without it, silhouette-grazing texels paint the white backdrop onto
+          the scalp/sides -- the MEASURED "white bonnet" halo. Masked-out
+          texels fall through to the TripoSR fill instead.
+  BACK    TripoSR clay vertex colors (its 360-degree hallucination: real hair/
+          skin tone) sampled at each texel's 3D position via k-NN inverse-
+          distance average over the aligned clay (dense: ~0.15 cm spacing),
+          then PALETTE-MATCHED to the photo with a per-channel affine map
+          fitted (residual-trimmed) on texels where photo AND clay overlap --
+          so TripoSR's washed-out palette lands on the photo's palette and the
+          hairline/jaw blend has no color step.
   MIRROR  exterior texels with neither photo nor clay try the X-mirrored
-          position through the same camera (faces are ~symmetric) before
-          falling back to inpaint.
-  SEAMS   blended by the N.V weight; leftovers classically inpainted (TELEA);
-          UV island gutters padded by mean-dilation.
+          position through the same camera (faces are ~symmetric; person-mask
+          enforced there too) before falling back to inpaint.
+  SEAMS   final = w_photo*photo + (1-w_photo)*mapped_clay with w_photo the
+          N.V smoothstep feather times the soft person mask; leftovers
+          classically inpainted (TELEA); UV gutters padded by mean-dilation.
   INTERIOR teeth/eyeballs/mouth-socket texels that the photo cannot see get
           honest flat defaults (ivory / sclera / dark mouth) instead of
           projection garbage that would show when jawOpen plays.
@@ -26,6 +38,10 @@ One diffuse map, no statistical/NC albedo prior:
           measured L/R iris colors differ), built photo-derived by
           eye_texture.py with the iris disc at UV (0.5,0.5) = the eyeball's
           forward pole. s6 binds them via separate eye material(s).
+
+The same masked photo weights + mapped TripoSR fill feed BOTH the tile-0
+albedo AND vertex_colors.npy (RestMat = the UDIM tile-1+ scalp/back polys), so
+the back of the head is TripoSR-hair-colored, not a flat default.
 
 Reads out/rig/arkit_deltas.npz (single source of export geometry + UVs),
 out/fit/camera.json + expression_offset.npy, out/landmarks/input_image.png,
@@ -53,6 +69,80 @@ COL_SCLERA = np.array([0.93, 0.92, 0.90])
 COL_MOUTH = np.array([0.40, 0.18, 0.16])
 
 
+def build_person_mask(photo, tol, erode_px, blur_sigma):
+    """Soft person mask in [0,1]: 1 on the subject, 0 on the backdrop.
+
+    Procedural + honest (no learned matting): the backdrop is the near-uniform
+    color connected to the top/left/right image borders (bottom excluded -- the
+    subject's torso usually exits there). Candidate pixels within --bg-tol of
+    the border-median color are connected-component labeled; components that
+    touch those borders are background. The person mask is then ERODED (so
+    bilinear sampling near the hair/backdrop edge cannot mix white in) and
+    Gaussian-feathered (soft edge -> the photo weight ramps out smoothly).
+    If the backdrop is not uniform, few candidates connect and the mask
+    degrades gracefully toward all-person (= previous behavior).
+    """
+    import cv2
+    H, W = photo.shape[:2]
+    border = np.concatenate([photo[0, :], photo[1, :], photo[:, 0],
+                             photo[:, 1], photo[:, W - 2], photo[:, W - 1]])
+    bg_rgb = np.median(border, axis=0)
+    cand = (np.linalg.norm(photo - bg_rgb, axis=2) < tol).astype(np.uint8)
+    _, lab = cv2.connectedComponents(cand, connectivity=4)
+    touch = np.unique(np.concatenate([lab[0, :], lab[:, 0], lab[:, W - 1]]))
+    touch = touch[touch != 0]  # label 0 = non-candidate pixels
+    person_hard = ~np.isin(lab, touch)
+    raw_frac = float(person_hard.mean())
+    k = 2 * int(erode_px) + 1
+    person = cv2.erode(person_hard.astype(np.uint8), np.ones((k, k), np.uint8))
+    person = cv2.GaussianBlur(person.astype(np.float64), (0, 0), blur_sigma)
+    info = {"enabled": True, "bg_rgb": np.round(bg_rgb, 3).tolist(),
+            "tol": tol, "erode_px": int(erode_px), "blur_sigma": blur_sigma,
+            "person_frac_raw": raw_frac,
+            "person_frac_soft": float(person.mean())}
+    return person, info
+
+
+def sample_clay(tree, ccols, pts, k):
+    """(dist_to_nearest, color) -- inverse-distance mean color of the k
+    nearest clay vertices (mild denoise; stays local: clay ~0.15 cm spacing)."""
+    dist, idx = tree.query(pts, k=k)
+    if k == 1:
+        return dist, ccols[idx]
+    w = 1.0 / np.maximum(dist, 1e-6)
+    col = (ccols[idx] * w[..., None]).sum(axis=1) / w.sum(axis=1)[..., None]
+    return dist[:, 0], col
+
+
+def fit_clay_to_photo(clay_c, photo_c, trim, min_pairs=2000):
+    """Per-channel affine map a*c+b minimizing ||a*clay+b - photo|| over the
+    texels where BOTH sources exist (front face + visible front hair). This is
+    the seam killer: TripoSR's hallucinated palette is measurably washed out;
+    mapping it onto the photo's palette makes the hairline/jaw blend a no-op
+    color-wise. Two-pass residual-trimmed least squares; slope clamped to
+    [0.4, 2.5] (offset refit after clamping). Falls back to identity when the
+    overlap is too small to be trustworthy."""
+    a, b = np.ones(3), np.zeros(3)
+    n = int(len(clay_c))
+    if n < min_pairs:
+        return a, b, {"applied": False, "pairs": n,
+                      "reason": f"pairs < {min_pairs}"}
+    for ch in range(3):
+        x, y = clay_c[:, ch], photo_c[:, ch]
+        coef = np.array([1.0, 0.0])
+        for _ in range(2):
+            A = np.stack([x, np.ones_like(x)], axis=1)
+            coef, *_ = np.linalg.lstsq(A, y, rcond=None)
+            r = np.abs(A @ coef - y)
+            keep = r <= np.quantile(r, 1.0 - trim)
+            x, y = x[keep], y[keep]
+        a[ch] = float(np.clip(coef[0], 0.4, 2.5))
+        b[ch] = float(np.mean(y) - a[ch] * np.mean(x))
+    return a, b, {"applied": True, "pairs": n,
+                  "gain": np.round(a, 3).tolist(),
+                  "offset": np.round(b, 3).tolist()}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default=P.OUT)
@@ -65,6 +155,8 @@ def main():
     ap.add_argument("--zbuf-max-px", type=int, default=1200)
     ap.add_argument("--clay-max-dist", type=float, default=6.0,
                     help="cm; farther nearest-clay-vertex = no clay color")
+    ap.add_argument("--clay-knn", type=int, default=8,
+                    help="k nearest clay verts averaged per color sample")
     ap.add_argument("--gutter", type=int, default=12, help="UV gutter padding px")
     ap.add_argument("--no-mirror", action="store_true",
                     help="disable X-mirrored photo fallback for occluded texels")
@@ -72,9 +164,21 @@ def main():
                     help="cm around the nose tip for the central-face sanity gate")
     ap.add_argument("--strict", action="store_true",
                     help="exit nonzero if the central-face sanity gate fails")
-    ap.add_argument("--match-clay-color", action="store_true",
-                    help="gain-match clay fill to photo skin tone (off: TripoSR "
-                         "colors already come from the same photo)")
+    ap.add_argument("--no-bg-mask", action="store_true",
+                    help="disable the procedural backdrop mask (photo pixels "
+                         "may then paint the backdrop onto silhouette texels)")
+    ap.add_argument("--bg-tol", type=float, default=0.12,
+                    help="color distance to the border median that counts as "
+                         "backdrop candidate")
+    ap.add_argument("--bg-erode-px", type=int, default=3)
+    ap.add_argument("--bg-blur-sigma", type=float, default=2.0)
+    ap.add_argument("--no-clay-match", action="store_true",
+                    help="skip the affine clay->photo palette match (raw "
+                         "TripoSR colors are measurably washed out)")
+    ap.add_argument("--match-min-w", type=float, default=0.4,
+                    help="min photo weight for a texel to join the palette fit")
+    ap.add_argument("--match-trim", type=float, default=0.2,
+                    help="fraction of worst residuals dropped per fit pass")
     ap.add_argument("--eye-size", type=int, default=512,
                     help="eye texture resolution (px)")
     ap.add_argument("--iris-frac", type=float, default=None,
@@ -104,6 +208,15 @@ def main():
     H, W = photo.shape[:2]
     print(f"[s5] photo {W}x{H}, texture {T}x{T}, expression "
           f"{'OFF' if args.no_expression else 'ON'}")
+
+    # ---- person mask: keep the backdrop out of every photo sample
+    if args.no_bg_mask:
+        pmask, bg_info = np.ones((H, W)), {"enabled": False}
+    else:
+        pmask, bg_info = build_person_mask(photo, args.bg_tol,
+                                           args.bg_erode_px, args.bg_blur_sigma)
+    print(f"[s5] person mask: {bg_info}")
+    pmask3 = pmask[..., None]
 
     tri_c = triangulate(faces_flat, faces_off)      # (M,3) into flat corners
     tri_v = faces_flat[tri_c]                       # vertex ids per corner
@@ -163,18 +276,26 @@ def main():
           f"facing sign {facing_sign:+.0f} (measured, not assumed)")
 
     # grazing texels (cos < ndotv_lo) get w=0 -> filled from clay/mirror/
-    # inpaint instead of stretching silhouette photo pixels across them
-    visible = depth_ok & (ndotv > args.ndotv_lo)
-    w_photo = smoothstep(ndotv, args.ndotv_lo, args.ndotv_hi)
+    # inpaint instead of stretching silhouette photo pixels across them;
+    # texels whose projection lands on the BACKDROP (person mask ~0) get w=0
+    # too -- that is the white-bonnet path, now closed.
+    mval = bilinear_sample(pmask3, uv_t)[:, 0]
+    visible = depth_ok & (ndotv > args.ndotv_lo) & (mval > 0.05)
+    w_photo = smoothstep(ndotv, args.ndotv_lo, args.ndotv_hi) * np.clip(mval, 0.0, 1.0)
     w_photo[~visible] = 0.0
     photo_col = bilinear_sample(photo, uv_t)
+    n_graze = int((depth_ok & (ndotv > 0) & (ndotv <= args.ndotv_lo)).sum())
+    n_bg = int((depth_ok & (ndotv > args.ndotv_lo) & (mval <= 0.05)).sum())
     print(f"[s5] photo-visible texels: {int((w_photo > 0).sum())} "
-          f"(depth-passing {int(depth_ok.sum())}, grazing-rejected "
-          f"{int((depth_ok & (ndotv > 0) & ~visible).sum())})")
+          f"(depth-passing {int(depth_ok.sum())}, grazing-rejected {n_graze}, "
+          f"backdrop-rejected {n_bg})")
 
-    # ---- clay vertex-color fill (hair + back of head)
+    # ---- TripoSR clay fill (hair + back/sides of head), palette-matched
     clay_col = np.zeros_like(photo_col)
     clay_ok = np.zeros(K, dtype=bool)
+    gain, offs = np.ones(3), np.zeros(3)
+    match_info = {"applied": False, "reason": "no clay"}
+    ctree, ccols = None, None
     clay_ply = Path(args.out) / "clay" / "clay_aligned.ply"
     if clay_ply.is_file():
         import trimesh
@@ -182,16 +303,17 @@ def main():
         cm = trimesh.load(clay_ply, process=False, force="mesh")
         cverts = np.asarray(cm.vertices)
         ccols = np.asarray(cm.visual.vertex_colors, dtype=np.float64)[:, :3] / 255.0
-        dist, idx = cKDTree(cverts).query(pos, k=1)
+        ctree = cKDTree(cverts)
+        dist, clay_col = sample_clay(ctree, ccols, pos, args.clay_knn)
         clay_ok = dist < args.clay_max_dist
-        clay_col = ccols[idx]
-        if args.match_clay_color:
-            both = clay_ok & (w_photo > 0.5) & (reg <= 1)
-            if both.sum() > 500:
-                gain = (photo_col[both].mean(0) + 1e-6) / (clay_col[both].mean(0) + 1e-6)
-                clay_col = np.clip(clay_col * np.clip(gain, 0.5, 2.0), 0, 1)
-                print(f"[s5] clay color gain-matched: {np.round(gain, 3)}")
-        print(f"[s5] clay-fillable texels: {int(clay_ok.sum())}")
+        if not args.no_clay_match:
+            pairs = (reg <= 1) & clay_ok & (w_photo >= args.match_min_w)
+            gain, offs, match_info = fit_clay_to_photo(
+                clay_col[pairs], photo_col[pairs], args.match_trim)
+            if match_info["applied"]:
+                clay_col = np.clip(clay_col * gain + offs, 0.0, 1.0)
+        print(f"[s5] clay-fillable texels: {int(clay_ok.sum())}; "
+              f"palette match: {match_info}")
     else:
         print(f"[s5 WARN] {clay_ply} missing -- no clay fill (holes -> inpaint)")
 
@@ -221,8 +343,9 @@ def main():
         inb_m = ((uv_m[:, 0] >= 0) & (uv_m[:, 0] < W)
                  & (uv_m[:, 1] >= 0) & (uv_m[:, 1] < H))
         nv_m = facing_sign * (nrm_m @ view)
+        mv_m = bilinear_sample(pmask3, uv_m)[:, 0]
         ok_m = (inb_m & (d_m >= zbuf[ym, xm] - args.zbuf_eps)
-                & (nv_m > args.ndotv_lo))
+                & (nv_m > args.ndotv_lo) & (mv_m > 0.5))
         idx = np.where(need)[0][ok_m]
         col[idx] = bilinear_sample(photo, uv_m)[ok_m]
         filled[idx], src[idx] = True, 5
@@ -347,8 +470,11 @@ def main():
     # [1,2], mouth socket [1,3], teeth [3,4], lashes up to [0,7]); this bake
     # only fills tile 0, and a wrapping sampler would paint every tile-1+
     # surface with the FACE image (the infamous stretched-face back of head).
-    # s6 gives those polys a vertex-colored material instead: photo where
-    # visible, TripoSR clay (hair!) where near, honest flat interior defaults.
+    # s6 gives those polys a vertex-colored material instead. SAME recipe as
+    # the albedo: masked photo where visible, palette-matched TripoSR clay
+    # everywhere it has coverage (this IS the back/scalp -- hair, not a pale
+    # default), skin_mean ONLY where the clay has no coverage (e.g. the neck
+    # bottom below the clay's extent), honest flat interior defaults.
     vcol = np.zeros((len(verts), 3))
     vreg = np.searchsorted(REGION_BOUNDS, np.arange(len(verts)), side="right")
     vcol[vreg == 2] = COL_MOUTH          # mouth socket + eye sockets
@@ -361,23 +487,31 @@ def main():
     yi_v = np.clip((uv_all[:, 1] * zscale).astype(np.int64), 0, zh - 1)
     inb_v = ((uv_all[:, 0] >= 0) & (uv_all[:, 0] < W)
              & (uv_all[:, 1] >= 0) & (uv_all[:, 1] < H))
+    mval_v = bilinear_sample(pmask3, uv_all)[:, 0]
     vis_v = (inb_v & (depth_all >= zbuf[yi_v, xi_v] - args.zbuf_eps)
-             & (nv_v > args.ndotv_lo))
-    w_v = smoothstep(nv_v, args.ndotv_lo, args.ndotv_hi)
+             & (nv_v > args.ndotv_lo) & (mval_v > 0.05))
+    w_v = smoothstep(nv_v, args.ndotv_lo, args.ndotv_hi) * np.clip(mval_v, 0.0, 1.0)
     w_v[~vis_v] = 0.0
     photo_v = bilinear_sample(photo, uv_all)
     skin_mean = (photo_v[ext_v & vis_v].mean(0)
                  if (ext_v & vis_v).any() else np.array([0.75, 0.6, 0.55]))
+    # per-vertex fill source: 0 interior-default, 1 skin-default (no clay
+    # coverage), 2 triposr clay -- photo participation tracked via w_v
+    v_src = np.zeros(len(verts), dtype=np.uint8)
     vcol[ext_v] = skin_mean
+    v_src[ext_v] = 1
     from common import EYE_SOCKETS
     vcol[EYE_SOCKETS[0]:EYE_SOCKETS[1]] = skin_mean * 0.8  # shadowed lid skin
-    if clay_ply.is_file():
-        from scipy.spatial import cKDTree
-        dist_v, idx_v = cKDTree(cverts).query(verts[ext_v], k=1)
+    if ctree is not None:
+        dist_v, ccol_v = sample_clay(ctree, ccols, expressed[ext_v], args.clay_knn)
+        ccol_v = np.clip(ccol_v * gain + offs, 0.0, 1.0)
         near = dist_v < args.clay_max_dist
         tmp = vcol[ext_v]
-        tmp[near] = ccols[idx_v[near]]
+        tmp[near] = ccol_v[near]
         vcol[ext_v] = tmp
+        tsrc = v_src[ext_v]
+        tsrc[near] = 2
+        v_src[ext_v] = tsrc
     m_v = ext_v & (w_v > 0)
     vcol[m_v] = (w_v[m_v, None] * photo_v[m_v]
                  + (1 - w_v[m_v, None]) * vcol[m_v])
@@ -385,6 +519,49 @@ def main():
     print(f"[s5] per-vertex tile-fallback colors -> vertex_colors.npy "
           f"(photo-visible {int((ext_v & (w_v > 0)).sum())} skin verts, "
           f"skin mean {np.round(skin_mean, 3)})")
+
+    # ---- back/scalp coverage metrics (the proof the back is TripoSR-colored,
+    # not pale-default). Vertex level = RestMat (all head_neck polys are UDIM
+    # tile-1+); texel level = backfacing exterior texels on the tile-0 albedo.
+    hn0, hn1 = ICT_REGIONS["head_neck"]
+    hn_nophoto = (w_v[hn0:hn1] == 0)
+    hn_src = v_src[hn0:hn1]
+    back_scalp = np.zeros(len(verts), dtype=bool)
+    back_scalp[hn0:hn1] = True
+    back_scalp &= verts[:, 2] < 0.0  # behind the ears
+    vertex_fill = {
+        "ext_verts": int(ext_v.sum()),
+        "photo_blend_frac": float((w_v[ext_v] > 0).mean()),
+        "head_neck": {
+            "verts": int(hn1 - hn0),
+            "triposr_frac": float((hn_src == 2).mean()),
+            "default_frac": float((hn_src == 1).mean()),
+            "photo_touched_frac": float((w_v[hn0:hn1] > 0).mean()),
+            "no_photo_triposr_frac":
+                float((hn_src[hn_nophoto] == 2).mean()) if hn_nophoto.any() else None,
+            "no_photo_default_frac":
+                float((hn_src[hn_nophoto] == 1).mean()) if hn_nophoto.any() else None,
+        },
+        "back_scalp_mean_rgb": np.round(vcol[back_scalp].mean(0), 3).tolist()
+                               if back_scalp.any() else None,
+        "skin_mean_rgb": np.round(skin_mean, 3).tolist(),
+    }
+    print(f"[s5] vertex fill: {vertex_fill}")
+    back_t = ext & (ndotv <= 0.0)
+    if back_t.any():
+        back_region = {
+            "texels": int(back_t.sum()),
+            "triposr_frac": float((src[back_t] == 2).mean()),
+            "blend_frac": float((src[back_t] == 3).mean()),
+            "photo_frac": float((src[back_t] == 1).mean()),
+            "mirror_frac": float((src[back_t] == 5).mean()),
+            "default_frac": float((src[back_t] == 4).mean()),
+            "hole_frac_pre_inpaint": float(holes[back_t].mean()),
+            "mean_rgb": np.round(col[back_t].mean(0), 3).tolist(),
+        }
+    else:
+        back_region = {"texels": 0}
+    print(f"[s5] back-region texels (exterior, dot(n,view)<=0): {back_region}")
     wmap = np.zeros((T, T))
     wmap[covered] = w_photo
     Image.fromarray((wmap * 255).astype(np.uint8)).save(od / "debug_w_photo.png")
@@ -395,6 +572,8 @@ def main():
     nmap[covered] = (ndotv + 1.0) * 0.5  # sign-corrected: bright = camera-facing
     Image.fromarray((np.clip(nmap, 0, 1) * 255).astype(np.uint8)).save(
         od / "debug_ndotv.png")
+    Image.fromarray((np.clip(pmask, 0, 1) * 255).astype(np.uint8)).save(
+        od / "debug_person_mask.png")
     region_names = ["face", "head_neck", "interior_a", "teeth", "eyeballs",
                     "interior_b"]
     save_json(od / "bake_metrics.json", {
@@ -403,15 +582,27 @@ def main():
         "blend": int((src == 3).sum()), "interior_default": int((src == 4).sum()),
         "mirror": int((src == 5).sum()),
         "inpainted_holes": int(holes.sum()),
+        "sources_frac": {  # of covered texels; clay/blend = TripoSR-sourced
+            "photo": float((src == 1).mean()),
+            "triposr": float((src == 2).mean()),
+            "blend": float((src == 3).mean()),
+            "interior_default": float((src == 4).mean()),
+            "mirror": float((src == 5).mean()),
+            "holes_pre_inpaint": float(holes.mean()),
+        },
+        "person_mask": bg_info,
+        "backdrop_rejected_texels": n_bg,
+        "clay_match": match_info,
         "winding": {"frac_ndotv_neg_on_depth_pass": frac_neg,
                     "facing_sign": facing_sign,
                     "note": "sign measured from depth-passing exterior texels, "
                             "never assumed from OBJ winding"},
-        "grazing_rejected": int((depth_ok & (ndotv > 0)
-                                 & (ndotv <= args.ndotv_lo)).sum()),
+        "grazing_rejected": n_graze,
         "region_texels": {n: int((reg == i).sum())
                           for i, n in enumerate(region_names)},
         "central_face": cf,
+        "back_region": back_region,
+        "vertex_fill": vertex_fill,
         "sanity_pass": sanity_pass,
         "expression_applied": not args.no_expression,
         "eyes": eye_metrics,

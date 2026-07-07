@@ -8,11 +8,14 @@ exactly what a downstream importer gets -- materials, textures, opacity) and
 renders to out/renders/:
 
   glb_front_full.png    full head, front (front = Blender -Y after import)
+  glb_profile_full.png  full head, side -- the photo->TripoSR hairline blend
   glb_back_full.png     full head, back -- must be SOLID (opaque + culling ok)
   glb_eyes_front.png    tight eye close-up: iris + pupil + sclera, forward gaze
   glb_eyes_look.png     same framing with eye-look morphs at 1.0 -- the irises
                         must MOVE (proves the eye texture rides the eyeball
                         geometry through the ARKit morphs)
+  glb_tongue.png        mouth close-up with jawOpen + tongueOut -- the tongue
+                        must be visibly OUT past the lips (52/52 proof)
 
 EEVEE with Standard view transform (honest texture colors); Workbench TEXTURE
 fallback if EEVEE cannot initialize on a headless GPU.
@@ -31,6 +34,7 @@ import bpy  # noqa: E402
 from mathutils import Vector  # noqa: E402
 
 LOOK_SHAPES = ("eyeLookOutLeft", "eyeLookInRight")  # both eyes -> subject left
+TONGUE_SHAPES = ("jawOpen", "tongueOut")
 
 
 def parse_args():
@@ -133,6 +137,8 @@ def main():
     d_full = frame_dist(size, 50)
     shot("glb_front_full.png", (center.x, center.y - d_full, center.z),
          center, 50)
+    shot("glb_profile_full.png", (center.x - d_full, center.y, center.z),
+         center, 50)
     shot("glb_back_full.png", (center.x, center.y + d_full, center.z),
          center, 50)
 
@@ -151,6 +157,21 @@ def main():
         print(f"[s8] set {', '.join(LOOK_SHAPES)} = {args.look_value}")
         shot("glb_eyes_look.png", eye_cam, eye_c, 85)
         for n in LOOK_SHAPES:
+            kb[n].value = 0.0
+
+    # tongueOut proof: jaw opened so the tongue is visible, tongue fully out
+    missing_t = [n for n in TONGUE_SHAPES if n not in kb]
+    if missing_t:
+        print(f"[s8 WARN] tongue shapes missing from GLB: {missing_t} -- "
+              "skipping the tongue render")
+    else:
+        kb["jawOpen"].value = 0.6
+        kb["tongueOut"].value = 1.0
+        mouth_c = Vector((eye_c.x, eye_c.y, eye_c.z - 0.065))
+        d_mouth = frame_dist(0.16, 85)
+        shot("glb_tongue.png", (mouth_c.x, mouth_c.y - d_mouth, mouth_c.z),
+             mouth_c, 85)
+        for n in TONGUE_SHAPES:
             kb[n].value = 0.0
     print(f"[s8] DONE in {time.time()-t0:.1f}s")
 
