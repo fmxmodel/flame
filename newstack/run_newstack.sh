@@ -18,7 +18,8 @@
 #   REFINE=0 bash run_newstack.sh                             # skip clay (A/B)
 #   TEX_SIZE=2048 DRACO=1 bash run_newstack.sh
 #   STAGES="3d" bash run_newstack.sh                          # TRELLIS color clay
-#   CLAY_COLOR=trellis STAGES="5 6 7 8" bash run_newstack.sh  # bake w/ TRELLIS colors
+#   CLAY_COLOR=triposr STAGES="5 6 7 8" bash run_newstack.sh  # legacy TripoSR
+#                                # colors (A/B baseline; default is trellis)
 #
 # Stages: 1 landmarks | 2 identity fit | 3 clay align + shrinkwrap refine
 #         3d TRELLIS colored clay (s5 color source for CLAY_COLOR=trellis)
@@ -47,13 +48,16 @@ CLAY=${CLAY:-$ROOT/out_triposr/0/mesh.obj}
 CLAY_SG=${CLAY_SG:-$ROOT/out_triposg/random-person_triposg_300k.glb}
 MP_TASK=${MP_TASK:-/workspace/models/mediapipe/face_landmarker.task}
 
-STAGES=${STAGES:-"1 2 3 4 5 6 7"}
+STAGES=${STAGES:-"1 2 3 3d 4 5 6 7"}
 REFINE=${REFINE:-1}          # 0 = skip clay align + shrinkwrap (pure ICT fit)
 CLAY_SOURCE=${CLAY_SOURCE:-triposr}  # triposr | triposg (sharper geometry;
                              # TripoSR still runs -- ICP target + s5 colors)
-CLAY_COLOR=${CLAY_COLOR:-triposr}    # triposr | trellis : which colored clay
-                             # s5 samples (trellis = clay_trellis_aligned.ply
-                             # from stage 3d; default triposr = no change)
+CLAY_COLOR=${CLAY_COLOR:-trellis}    # trellis | triposr : which colored clay
+                             # s5 samples. Default trellis (stage 3d output;
+                             # MEASURED better: real 360 hair structure,
+                             # recolored to the subject's photo hair).
+                             # triposr = legacy palette, kept for A/B --
+                             # byte-identical to the pre-TRELLIS build.
 TRELLIS_DIR=${TRELLIS_DIR:-$ROOT/out_trellis}
 TEX_SIZE=${TEX_SIZE:-1024}
 DRACO=${DRACO:-0}
@@ -159,7 +163,19 @@ fi
 if want 5; then
   S5_CLAY=()
   if [ "$CLAY_COLOR" = "trellis" ]; then
-    S5_CLAY=(--clay-ply "$OUT/clay/clay_trellis_aligned.ply")
+    # TRELLIS palette is MEASURED dark (back luma ~0.15 vs photo hair 0.41):
+    # rank-matched cap luma (hue+brightness = measured photo hair, rank/
+    # structure = TRELLIS) + hair-likeness extension down the neck (TRELLIS
+    # paints the subject's long hair past the geometric nape band) + widened
+    # ratio clamps so the high-contrast structure survives. clay-max-dist 10:
+    # the TRELLIS hair shell sits up to 7.4 cm off the ICT skull back
+    # (MEASURED; 6 left a skin_mean hole). back-sat off: the TripoSR
+    # desaturation this lift counters does not exist in TRELLIS's real
+    # chroma (1.35 turned the ears neon). TripoSR path untouched.
+    S5_CLAY=(--clay-ply "$OUT/clay/clay_trellis_aligned.ply"
+             --cap-luma dist --hair-extend
+             --cap-ratio-lo 0.4 --cap-ratio-hi 1.8
+             --clay-max-dist 10 --back-sat 1.0)
   elif [ "$CLAY_COLOR" != "triposr" ]; then
     echo "[FATAL] CLAY_COLOR=$CLAY_COLOR is not triposr|trellis" >&2; exit 1
   fi

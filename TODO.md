@@ -181,6 +181,33 @@ newARC/
   - Pod note: mediapipe 0.10.35 c-bindings need `libEGL.so.1`/`libGLESv2.so.2` — root FS is ephemeral,
     re-`apt-get install -y libegl1 libgles2` after a pod restart.
 
+- [x] **s5 TRELLIS recolor → TRELLIS is the shipped default (`CLAY_COLOR=trellis`)** — run + A/B-verified
+  on pod. Design point: TRELLIS supplies luminance STRUCTURE + 360 coverage; the photo's measured hair
+  supplies HUE/brightness (its raw palette is near-black, luma 0.145 — unusable directly).
+  - Two legacy mechanisms MEASURED failing on TRELLIS: (1) the global luma regression railed at the 0.4
+    gain floor (weak correlation on the soft TRELLIS front) → offset 0.456 collapsed every fill texel
+    toward the skin mean = back even PALER than TripoSR; (2) `ratio=lum/zone_mean` clipped at 0.6
+    flattened the dark skull back; 13% of the TRELLIS back is near-black voids → ink-stain nape blob.
+  - s5 fixes (all flag-gated; `CLAY_COLOR=triposr` proven **byte-identical** albedo+vertex_colors):
+    `--cap-luma dist` RANK-matches the applied zone's luma histogram onto the visible-cap photo-hair
+    distribution (clay p05/p50/p95 0.19/0.31/0.35 → photo 0.30/0.44/0.59; darkest clay ranks land on
+    the photo hair's own darkest tone, never the clamp floor); `--hair-extend` widens the recolor
+    beyond the geometric cap wherever the clay MEASURES hair-like (luma classifier between the clay's
+    central-face skin median 0.394 and hair-zone median 0.303 — the full photo-overlap is hair-
+    contaminated, sep collapsed to 0.027; central-face anchor gives sep 0.091 → +83,499 texels down
+    the neck), z-gated behind the head; `--clay-max-dist 10` (TRELLIS hair shell sits up to 7.4 cm off
+    the ICT skull back; 6 left a 14-vert skin_mean pink hole); `--back-sat 1.0` (the TripoSR
+    desaturation that lift countered doesn't exist in TRELLIS's real chroma — 1.35 made neon ears).
+  - Proof (pod renders pulled to `out/renders/glb_{front,profile,back}_{triposr,trellis}.png`): back
+    mean RGB raw TRELLIS [0.341,0.262,0.243] luma 0.284 → composed [0.638,0.466,0.397] luma 0.510 vs
+    TripoSR baseline [0.614,0.438,0.387] luma 0.494; hair-zone luma 0.450 ≈ measured photo hair 0.406;
+    back shows wavy strand structure + top-lit crown instead of bald flat tan; hairline seamless;
+    front face byte-region unchanged (central-face gate PASS, brightness ratio 1.026); eyes + tongueOut
+    intact; s7 **PASS 52/52 OPAQUE+doubleSided**; topology 26719.
+  - `bake_metrics.json` now records `clay_source`, back-region before/after RGB+luma
+    (`clay_raw_mean_*` vs `mean_*`), the rank-map quantiles (`cap_match.lum_map`), and the classifier
+    anchors (`cap_match.hair_extend`). New debug map `out/tex/debug_w_hair.png` (applied recolor zone).
+
 ## Decisions (don't re-litigate)
 - **"Hole in the back of the head" was NOT geometry** — it was Blender's glTF importer assigning
   `blend_method=HASHED` + `show_transparent_back=True`, making the skin see-through so the internal

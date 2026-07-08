@@ -29,13 +29,22 @@
     "person_frac_soft": 0.7233554545259246
   },
   "backdrop_rejected_texels": 0,
+  "clay_source": "/workspace/newstack/out/clay/clay_trellis_aligned.ply",
   "params": {
     "clay_transfer": "lumachroma",
     "hair_knn": 2,
     "clay_knn": 8,
     "hair_chroma": 1.2,
-    "back_sat": 1.35,
+    "back_sat": 1.0,
     "nape_drop": 2.5,
+    "cap_luma": "dist",
+    "cap_gain": 1.0,
+    "cap_ratio_clamp": [
+      0.4,
+      1.8
+    ],
+    "hair_extend": true,
+    "hair_sep_min": 0.08,
     "ndotv_lo": 0.08,
     "ndotv_hi": 0.6,
     "bg_blur_sigma": 3.0
@@ -44,23 +53,23 @@
     "applied": true,
     "mode": "lumachroma",
     "pairs": 609834,
-    "luma_gain": 0.929,
-    "luma_offset": 0.075,
+    "luma_gain": 0.4,
+    "luma_offset": 0.456,
     "chroma_gain": [
-      1.087,
-      1.056,
-      1.151
+      0.974,
+      1.207,
+      0.769
     ],
     "chroma_offset": [
-      -0.022,
-      0.008,
-      0.013
+      0.082,
+      -0.023,
+      -0.076
     ]
   },
   "cap_match": {
     "applied": true,
     "pairs": 62871,
-    "mode": "photo-hair palette x TripoSR luminance + local chroma deviation",
+    "mode": "photo-hair palette x clay luminance (dist) + local chroma deviation",
     "cap_y_cm": [
       10.84,
       13.59
@@ -74,13 +83,40 @@
       0.371,
       0.294
     ],
-    "clay_cap_lum_mu": 0.436,
+    "photo_hair_lum_mu": 0.406,
+    "photo_hair_lum_std": 0.092,
+    "clay_cap_lum_mu": 0.301,
+    "cap_luma": "dist",
+    "cap_ratio_clamp": [
+      0.4,
+      1.8
+    ],
+    "lum_map": {
+      "clay_zone_p05_p50_p95": [
+        0.19,
+        0.309,
+        0.348
+      ],
+      "photo_cap_p05_p50_p95": [
+        0.304,
+        0.438,
+        0.588
+      ]
+    },
     "hair_knn": 2,
     "hair_chroma": 1.2,
+    "hair_extend": {
+      "enabled": true,
+      "clay_skin_lum_med": 0.394,
+      "clay_hair_lum_med": 0.303,
+      "sep": 0.091,
+      "applied": true,
+      "texels_beyond_zone": 83499
+    },
     "clay_dev_mu": [
-      0.116,
-      -0.039,
-      -0.1034
+      0.0604,
+      -0.0223,
+      -0.0435
     ]
   },
   "winding": {
@@ -104,9 +140,9 @@
     "default_frac": 0.0,
     "mirror_frac": 0.0,
     "hole_frac_pre_inpaint": 0.0,
-    "mean_brightness": 0.5979182641488342,
+    "mean_brightness": 0.6008054441823794,
     "photo_face_brightness": 0.5853427404322665,
-    "brightness_ratio": 1.021484034648283,
+    "brightness_ratio": 1.0264164952975992,
     "pass": true
   },
   "back_region": {
@@ -118,27 +154,36 @@
     "default_frac": 0.0,
     "hole_frac_pre_inpaint": 0.0,
     "mean_rgb": [
-      0.614,
-      0.438,
-      0.387
+      0.638,
+      0.466,
+      0.397
     ],
+    "mean_luma": 0.5096332295284116,
     "saturation": {
-      "mean_sat": 0.3745762138226272,
-      "chroma_mean": 0.17092076344365895,
-      "chroma_std": 0.05559891409219028
-    }
+      "mean_sat": 0.37501103740657504,
+      "chroma_mean": 0.17681734345772263,
+      "chroma_std": 0.04496057519756914
+    },
+    "clay_raw_mean_rgb": [
+      0.341,
+      0.262,
+      0.243
+    ],
+    "clay_raw_mean_luma": 0.28360606943204536
   },
   "hair_zone": {
-    "texels": 92276,
+    "texels": 175775,
+    "geometric_zone_texels": 92276,
     "mean_rgb": [
-      0.533,
-      0.394,
-      0.319
+      0.569,
+      0.412,
+      0.334
     ],
+    "mean_luma": 0.45008807090767694,
     "saturation": {
-      "mean_sat": 0.4059501948644826,
-      "chroma_mean": 0.15568710577515468,
-      "chroma_std": 0.026461447313856988
+      "mean_sat": 0.41069500045769947,
+      "chroma_mean": 0.17102593103518904,
+      "chroma_std": 0.041938473651524685
     }
   },
   "vertex_fill": {
@@ -146,21 +191,21 @@
     "photo_blend_frac": 0.597972972972973,
     "head_neck": {
       "verts": 1839,
-      "triposr_frac": 0.9668297988036977,
-      "default_frac": 0.03317020119630234,
+      "triposr_frac": 1.0,
+      "default_frac": 0.0,
       "photo_touched_frac": 0.10984230560087004,
-      "no_photo_triposr_frac": 0.9627367135003054,
-      "no_photo_default_frac": 0.03726328649969456
+      "no_photo_triposr_frac": 1.0,
+      "no_photo_default_frac": 0.0
     },
     "back_scalp_mean_rgb": [
       0.531,
-      0.428,
-      0.363
+      0.402,
+      0.331
     ],
     "back_scalp_saturation": {
-      "mean_sat": 0.3192432253108191,
-      "chroma_mean": 0.12240702429280884,
-      "chroma_std": 0.04411477304291002
+      "mean_sat": 0.36194654169566187,
+      "chroma_mean": 0.1450851434986689,
+      "chroma_std": 0.061577708983880215
     },
     "skin_mean_rgb": [
       0.705,

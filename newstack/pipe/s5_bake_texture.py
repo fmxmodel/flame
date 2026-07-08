@@ -49,6 +49,30 @@ One diffuse map, no statistical/NC albedo prior:
           fill, feathered by backfacing-ness (the photo-lit front is
           untouched; the measured cap palette already carries real hair
           saturation, so it is exempt), counters the residual desaturation.
+  TRELLIS an alternative clay color source (--clay-ply clay_trellis_aligned
+          .ply via CLAY_COLOR=trellis) with full-360 coverage and real hair
+          STRUCTURE -- but a much darker palette than the subject (MEASURED:
+          back-of-skull luma 0.145 vs the photo hair base 0.41). Two measured
+          failure modes of the legacy machinery on it, and their fixes:
+          (1) the global luma regression is correlation-limited: on the soft
+          TRELLIS front it railed at the 0.4 gain floor with offset 0.456,
+          collapsing every fill texel toward the skin mean -- the back went
+          PALE-FLAT, not dark. (2) the hair-zone ratio lum/zone_mean with the
+          hard 0.6 clip flattened the genuinely dark skull back at the clip
+          floor (and 13% of the TRELLIS back is a near-black void mass that
+          any linear map rails into an ink-stain blob). Fixes: --cap-luma
+          dist RANK-matches the applied zone's luma histogram onto the
+          measured visible-cap photo-hair distribution (clamped
+          --cap-ratio-lo/hi), so the crown/back lands ON the subject's hair
+          palette -- darkest clay ranks land on the photo hair's own darkest
+          tone -- while TRELLIS supplies the per-texel structure;
+          --hair-extend widens
+          the recolor beyond the geometric zone wherever the clay itself
+          MEASURES hair-like (luma classifier between the clay's photo-
+          overlap skin median and hair-zone median, z-gated to behind the
+          head) -- TRELLIS paints long hair down the neck that the geometric
+          nape band cannot reach. Defaults keep the legacy TripoSR path
+          byte-identical (ratio mode, no extension).
   MIRROR  exterior texels with neither photo nor clay try the X-mirrored
           position through the same camera (faces are ~symmetric; person-mask
           enforced there too) before falling back to inpaint.
@@ -309,6 +333,40 @@ def main():
                     help="min photo weight for cap-fit texels (lower than "
                          "--match-min-w: the scalp top is grazing by nature, "
                          "and palette STATISTICS tolerate mild stretching)")
+    ap.add_argument("--cap-luma", choices=("ratio", "dist"), default="ratio",
+                    help="hair-zone luminance mapping. ratio (legacy, "
+                         "TripoSR default) divides clay luma by the zone "
+                         "mean and clips -- fine for a mild palette, but a "
+                         "dark high-contrast source (TRELLIS back, luma "
+                         "~0.15, 13%% near-black voids) rails at the clip "
+                         "floor and flattens. dist RANK-matches the zone's "
+                         "luma histogram onto the measured visible-cap "
+                         "photo-hair distribution: the source only supplies "
+                         "rank/STRUCTURE; every output tone is one the "
+                         "subject's real hair shows in the photo")
+    ap.add_argument("--cap-gain", type=float, default=1.0,
+                    help="extra contrast about the photo-hair mean after "
+                         "the dist rank match (1.0 = photo-hair contrast)")
+    ap.add_argument("--cap-ratio-lo", type=float, default=0.6)
+    ap.add_argument("--cap-ratio-hi", type=float, default=1.4,
+                    help="clamps on the hair luminance ratio about the "
+                         "photo-hair base color (legacy 0.6/1.4; widen for "
+                         "a high-contrast source so structure survives)")
+    ap.add_argument("--hair-extend", action="store_true",
+                    help="extend the hair recolor beyond the geometric zone "
+                         "wherever the clay itself MEASURES hair-like: luma "
+                         "classifier between the clay's photo-overlap skin "
+                         "median and its hair-zone median, z-gated to behind "
+                         "the head. A 360 source that paints long hair down "
+                         "the neck/shoulders needs this -- the geometric "
+                         "nape band leaves that hair in the skin transfer. "
+                         "Skin-colored clay (h~0, e.g. a bald or short-hair "
+                         "subject) self-corrects to the skin transfer")
+    ap.add_argument("--hair-sep-min", type=float, default=0.08,
+                    help="min luma separation (clay skin median - clay hair "
+                         "median) for the --hair-extend classifier to "
+                         "engage; below it the clay cannot distinguish its "
+                         "own hair from skin and the extension stays off")
     ap.add_argument("--clay-ply", default=None,
                     help="vertex-colored clay PLY to k-NN color-sample as the "
                          "back/hair fill (default: out/clay/clay_aligned.ply "
@@ -495,12 +553,55 @@ def main():
             return np.maximum(crown, np.maximum(above_ear, nape))
 
         cap_mu_p, cap_mu_lc, cap_dev_mu = None, None, None
+        mu_p_lum, std_p_lum, cap_pq = None, None, None
         w_cap = hair_zone_w(pos)
+        # --hair-extend: widen the recolor wherever the clay itself MEASURES
+        # hair-like. Anchors are the clay's OWN medians (photo-overlap skin
+        # vs geometric hair zone), so the classifier adapts to any palette;
+        # z-gated to behind the head (the nape gate) so dark FRONT features
+        # (brows, under-chin shading) can never turn into hair.
+        hair_like_w = None
+        ext_info = {"enabled": bool(args.hair_extend)}
+        w_use = w_cap
+        if args.hair_extend:
+            lum_raw_t = clay_raw @ LUM_W
+            # skin anchor from the CENTRAL FACE only (nose-tip ball):
+            # MEASURED, the full photo-overlap is contaminated by the
+            # subject's VISIBLE hair (TRELLIS skin median collapsed to 0.330
+            # vs hair 0.303 -> separation 0.027, classifier dead); the
+            # central face is skin by construction (sep 0.15+ there)
+            spair = (clay_ok & (w_photo >= args.match_min_w)
+                     & (np.linalg.norm(pos - lmk_pos[30], axis=1)
+                        < args.central_radius))
+            zgeo = clay_ok & (w_cap > 0.5)
+            mu_skin_lum = (float(np.median(lum_raw_t[spair]))
+                           if spair.any() else 0.0)
+            mu_hair_lum = (float(np.median(lum_raw_t[zgeo]))
+                           if zgeo.any() else 0.0)
+            sep = mu_skin_lum - mu_hair_lum
+            ext_info.update({"clay_skin_lum_med": round(mu_skin_lum, 3),
+                             "clay_hair_lum_med": round(mu_hair_lum, 3),
+                             "sep": round(sep, 3)})
+            if sep >= args.hair_sep_min:
+                def hair_like_w(lum_c, pz):  # shared with the vertex path
+                    t = (lum_c - mu_hair_lum) / sep
+                    return ((1.0 - smoothstep(t, 0.35, 0.75))
+                            * smoothstep(z_ear - 1.0 - pz, 0.0, 2.0))
+                w_ext = hair_like_w(lum_raw_t, pos[:, 2]) * clay_ok
+                w_use = np.maximum(w_cap, w_ext)
+                ext_info.update({
+                    "applied": True,
+                    "texels_beyond_zone": int(((w_ext > 0.5)
+                                               & (w_cap <= 0.5)).sum())})
+            else:
+                ext_info.update({"applied": False,
+                                 "reason": f"clay skin/hair luma separation "
+                                           f"{sep:.3f} < {args.hair_sep_min}"})
         # sharper k-NN inside the hair zone: k=8 averages away the strand-
         # scale tonal variation that sells hair; k=2 keeps it (denoise stays
         # k=8 everywhere else).
         clay_sharp = clay_raw
-        hz = w_cap > 0.0
+        hz = w_use > 0.0
         if args.hair_knn != args.clay_knn and hz.any():
             _, cs = sample_clay(ctree, ccols, pos[hz], args.hair_knn)
             clay_sharp = clay_raw.copy()
@@ -533,8 +634,10 @@ def main():
                 q20, q50 = np.quantile(lum_p, [0.2, 0.5])
                 band = (lum_p >= q20) & (lum_p <= q50)
                 cap_mu_p = pc_pair[band].mean(0)
+                mu_p_lum = float(max(cap_mu_p @ LUM_W, 1e-6))
+                std_p_lum = float(lum_p.std())
                 lum = clay_sharp @ LUM_W
-                zone = clay_ok & (w_cap > 0.5)
+                zone = clay_ok & (w_use > 0.5)
                 # anchor the luma ratio on the APPLIED zone, not the photo-
                 # visible cap: MEASURED, TripoSR paints the hidden crown
                 # systematically BRIGHTER than the visible cap (visible-cap
@@ -546,7 +649,37 @@ def main():
                 # the luminance VARIATION, as intended.
                 cap_mu_lc = float(max(lum[zone].mean() if zone.any()
                                       else lum[cpair].mean(), 1e-6))
-                ratio = np.clip(lum / cap_mu_lc, 0.6, 1.4)
+                if args.cap_luma == "dist":
+                    # RANK (histogram) match of the applied zone's luma onto
+                    # the measured VISIBLE-cap photo luma distribution: the
+                    # clay supplies rank/structure only; every output tone
+                    # is one the subject's real hair exhibits in the photo.
+                    # A moment (mean/std) match was MEASURED insufficient on
+                    # TRELLIS: 13% of its skull back is a near-black void
+                    # mass, and std-matching railed it at the ratio floor
+                    # (final back luma p05 0.17 = an ink-stain nape blob);
+                    # rank-matching sends it to the photo hair's own darkest
+                    # tone instead. A plain lum/mean ratio (legacy) is worse
+                    # still: the whole dark back clips flat at the floor.
+                    qs = np.linspace(0.0, 1.0, 65)
+                    cap_zq = np.quantile(lum[zone] if zone.any()
+                                         else lum[cpair], qs)
+                    cap_pq = np.quantile(lum_p, qs)
+                    lum_t = np.interp(lum, cap_zq, cap_pq)
+                    if args.cap_gain != 1.0:
+                        lum_t = mu_p_lum + args.cap_gain * (lum_t - mu_p_lum)
+                    ratio = np.clip(lum_t / mu_p_lum,
+                                    args.cap_ratio_lo, args.cap_ratio_hi)
+                    lum_map = {"clay_zone_p05_p50_p95": np.round(np.quantile(
+                                   lum[zone] if zone.any() else lum[cpair],
+                                   [.05, .5, .95]), 3).tolist(),
+                               "photo_cap_p05_p50_p95": np.round(np.quantile(
+                                   lum_p, [.05, .5, .95]), 3).tolist()}
+                else:
+                    cap_pq = None
+                    lum_map = None
+                    ratio = np.clip(lum / cap_mu_lc,
+                                    args.cap_ratio_lo, args.cap_ratio_hi)
                 cap_mapped = cap_mu_p[None] * ratio[:, None]
                 if args.hair_chroma > 0:
                     # MODULATE the photo-hair base by TripoSR's LOCAL chroma
@@ -559,18 +692,26 @@ def main():
                     cap_mapped = cap_mapped + args.hair_chroma * np.clip(
                         dev - cap_dev_mu, -0.2, 0.2)
                 cap_mapped = np.clip(cap_mapped, 0.0, 1.0)
-                clay_col = ((1.0 - w_cap[:, None]) * clay_col
-                            + w_cap[:, None] * cap_mapped)
+                clay_col = ((1.0 - w_use[:, None]) * clay_col
+                            + w_use[:, None] * cap_mapped)
                 cap_info = {"applied": True, "pairs": n_cpair,
-                            "mode": "photo-hair palette x TripoSR luminance "
-                                    "+ local chroma deviation",
+                            "mode": f"photo-hair palette x clay luminance "
+                                    f"({args.cap_luma}) + local chroma "
+                                    f"deviation",
                             "cap_y_cm": [round(cap0, 2), round(cap1, 2)],
                             "skull_back": {"y_ear": round(y_ear, 2),
                                            "z_ear": round(z_ear, 2)},
                             "photo_hair_mu": np.round(cap_mu_p, 3).tolist(),
+                            "photo_hair_lum_mu": round(mu_p_lum, 3),
+                            "photo_hair_lum_std": round(std_p_lum, 3),
                             "clay_cap_lum_mu": round(cap_mu_lc, 3),
+                            "cap_luma": args.cap_luma,
+                            "cap_ratio_clamp": [args.cap_ratio_lo,
+                                                args.cap_ratio_hi],
+                            "lum_map": lum_map,
                             "hair_knn": args.hair_knn,
                             "hair_chroma": args.hair_chroma,
+                            "hair_extend": ext_info,
                             "clay_dev_mu": (np.round(cap_dev_mu, 4).tolist()
                                             if cap_dev_mu is not None else None)}
             else:
@@ -780,8 +921,14 @@ def main():
         else:
             ccol_v = np.clip(ccol_raw_v * gain + offs, 0.0, 1.0)
         w_cap_v = hair_zone_w(pos_v)
+        near = dist_v < args.clay_max_dist
+        w_use_v = w_cap_v
+        if hair_like_w is not None:  # same measured classifier as the texels
+            w_use_v = np.maximum(
+                w_cap_v,
+                hair_like_w(ccol_raw_v @ LUM_W, pos_v[:, 2]) * near)
         sharp_v = ccol_raw_v
-        hz_v = w_cap_v > 0.0
+        hz_v = w_use_v > 0.0
         if args.hair_knn != args.clay_knn and hz_v.any():
             _, cs_v = sample_clay(ctree, ccols, pos_v[hz_v], args.hair_knn)
             sharp_v = ccol_raw_v.copy()
@@ -793,18 +940,31 @@ def main():
             ccol_v = np.clip(lum_cv[:, None]
                              + sat_v[:, None] * (ccol_v - lum_cv[:, None]),
                              0.0, 1.0)
-        near = dist_v < args.clay_max_dist
         if cap_info.get("applied"):
-            # anchors (luma mean + chroma-dev mean) are re-measured on the
-            # VERTEX samples of the applied zone -- the texel anchors do not
-            # transfer (MEASURED: vertex dev distribution is less warm than
-            # the texel zone's; a texel dev_mu anchor blue-shifted the crown
-            # verts by -hair_chroma*dev_mu ~ [-0.14,+0.05,+0.13])
+            # anchors (luma mean/std + chroma-dev mean) are re-measured on
+            # the VERTEX samples of the applied zone -- the texel anchors do
+            # not transfer (MEASURED: vertex dev distribution is less warm
+            # than the texel zone's; a texel dev_mu anchor blue-shifted the
+            # crown verts by -hair_chroma*dev_mu ~ [-0.14,+0.05,+0.13])
             lum_v = sharp_v @ LUM_W
-            zone_v = near & (w_cap_v > 0.5)
+            zone_v = near & (w_use_v > 0.5)
             mu_lc_v = float(max(lum_v[zone_v].mean() if zone_v.any()
                                 else cap_mu_lc, 1e-6))
-            ratio_v = np.clip(lum_v / mu_lc_v, 0.6, 1.4)
+            if args.cap_luma == "dist" and cap_pq is not None:
+                # same rank match; the CLAY-side quantiles are re-measured
+                # on the vertex zone (texel anchors do not transfer), the
+                # photo-side target distribution is shared
+                qs_v = np.linspace(0.0, 1.0, 65)
+                zq_v = np.quantile(lum_v[zone_v] if zone_v.any() else lum_v,
+                                   qs_v)
+                lum_tv = np.interp(lum_v, zq_v, cap_pq)
+                if args.cap_gain != 1.0:
+                    lum_tv = mu_p_lum + args.cap_gain * (lum_tv - mu_p_lum)
+                ratio_v = np.clip(lum_tv / mu_p_lum,
+                                  args.cap_ratio_lo, args.cap_ratio_hi)
+            else:
+                ratio_v = np.clip(lum_v / mu_lc_v,
+                                  args.cap_ratio_lo, args.cap_ratio_hi)
             cap_v = cap_mu_p[None] * ratio_v[:, None]
             if args.hair_chroma > 0 and cap_dev_mu is not None:
                 dev_v = sharp_v - lum_v[:, None]
@@ -813,8 +973,8 @@ def main():
                 cap_v = cap_v + args.hair_chroma * np.clip(
                     dev_v - dev_mu_v, -0.2, 0.2)
             cap_v = np.clip(cap_v, 0.0, 1.0)
-            ccol_v = ((1.0 - w_cap_v[:, None]) * ccol_v
-                      + w_cap_v[:, None] * cap_v)
+            ccol_v = ((1.0 - w_use_v[:, None]) * ccol_v
+                      + w_use_v[:, None] * cap_v)
         tmp = vcol[ext_v]
         tmp[near] = ccol_v[near]
         vcol[ext_v] = tmp
@@ -868,20 +1028,37 @@ def main():
             "default_frac": float((src[back_t] == 4).mean()),
             "hole_frac_pre_inpaint": float(holes[back_t].mean()),
             "mean_rgb": np.round(col[back_t].mean(0), 3).tolist(),
+            "mean_luma": float((col[back_t] @ LUM_W).mean()),
             "saturation": sat_metrics(col[back_t]),
         }
+        if ctree is not None:  # raw source palette -> the recolor is provable
+            mb = back_t & clay_ok
+            if mb.any():
+                back_region["clay_raw_mean_rgb"] = np.round(
+                    clay_raw[mb].mean(0), 3).tolist()
+                back_region["clay_raw_mean_luma"] = float(
+                    (clay_raw[mb] @ LUM_W).mean())
     else:
         back_region = {"texels": 0}
     print(f"[s5] back-region texels (exterior, dot(n,view)<=0): {back_region}")
     if ctree is not None:
-        hz_t = ext & clay_ok & (w_cap > 0.5)
+        hz_t = ext & clay_ok & (w_use > 0.5)
         hair_zone = {"texels": int(hz_t.sum()),
+                     "geometric_zone_texels": int((ext & clay_ok
+                                                   & (w_cap > 0.5)).sum()),
                      "mean_rgb": (np.round(col[hz_t].mean(0), 3).tolist()
                                   if hz_t.any() else None),
+                     "mean_luma": (float((col[hz_t] @ LUM_W).mean())
+                                   if hz_t.any() else None),
                      "saturation": sat_metrics(col[hz_t])}
     else:
         hair_zone = {"texels": 0}
-    print(f"[s5] hair-zone texels (composed): {hair_zone}")
+    print(f"[s5] hair-zone texels (composed, applied zone): {hair_zone}")
+    if ctree is not None:  # applied hair-recolor weight map (geo + extension)
+        hmap = np.zeros((T, T))
+        hmap[covered] = w_use
+        Image.fromarray((np.clip(hmap, 0, 1) * 255).astype(np.uint8)).save(
+            od / "debug_w_hair.png")
     wmap = np.zeros((T, T))
     wmap[covered] = w_photo
     Image.fromarray((wmap * 255).astype(np.uint8)).save(od / "debug_w_photo.png")
@@ -917,6 +1094,10 @@ def main():
                    "hair_knn": args.hair_knn, "clay_knn": args.clay_knn,
                    "hair_chroma": args.hair_chroma, "back_sat": args.back_sat,
                    "nape_drop": args.nape_drop,
+                   "cap_luma": args.cap_luma, "cap_gain": args.cap_gain,
+                   "cap_ratio_clamp": [args.cap_ratio_lo, args.cap_ratio_hi],
+                   "hair_extend": bool(args.hair_extend),
+                   "hair_sep_min": args.hair_sep_min,
                    "ndotv_lo": args.ndotv_lo, "ndotv_hi": args.ndotv_hi,
                    "bg_blur_sigma": args.bg_blur_sigma},
         "clay_match": match_info,

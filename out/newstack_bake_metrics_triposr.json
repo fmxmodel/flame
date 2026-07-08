@@ -1,0 +1,250 @@
+{
+  "texture_size": 1024,
+  "texels_covered": 1024950,
+  "photo": 19130,
+  "clay": 232635,
+  "blend": 770269,
+  "interior_default": 2916,
+  "mirror": 0,
+  "inpainted_holes": 0,
+  "sources_frac": {
+    "photo": 0.018664325089028735,
+    "triposr": 0.22697204741694718,
+    "blend": 0.7515186106639348,
+    "interior_default": 0.0028450168300892726,
+    "mirror": 0.0,
+    "holes_pre_inpaint": 0.0
+  },
+  "person_mask": {
+    "enabled": true,
+    "bg_rgb": [
+      0.914,
+      0.914,
+      0.929
+    ],
+    "tol": 0.12,
+    "erode_px": 3,
+    "blur_sigma": 3.0,
+    "person_frac_raw": 0.7366762161254883,
+    "person_frac_soft": 0.7233554545259246
+  },
+  "backdrop_rejected_texels": 0,
+  "clay_source": "/workspace/newstack/out/clay/clay_aligned.ply",
+  "params": {
+    "clay_transfer": "lumachroma",
+    "hair_knn": 2,
+    "clay_knn": 8,
+    "hair_chroma": 1.2,
+    "back_sat": 1.35,
+    "nape_drop": 2.5,
+    "ndotv_lo": 0.08,
+    "ndotv_hi": 0.6,
+    "bg_blur_sigma": 3.0
+  },
+  "clay_match": {
+    "applied": true,
+    "mode": "lumachroma",
+    "pairs": 609834,
+    "luma_gain": 0.929,
+    "luma_offset": 0.075,
+    "chroma_gain": [
+      1.087,
+      1.056,
+      1.151
+    ],
+    "chroma_offset": [
+      -0.022,
+      0.008,
+      0.013
+    ]
+  },
+  "cap_match": {
+    "applied": true,
+    "pairs": 62871,
+    "mode": "photo-hair palette x TripoSR luminance + local chroma deviation",
+    "cap_y_cm": [
+      10.84,
+      13.59
+    ],
+    "skull_back": {
+      "y_ear": 3.76,
+      "z_ear": 3.72
+    },
+    "photo_hair_mu": [
+      0.517,
+      0.371,
+      0.294
+    ],
+    "clay_cap_lum_mu": 0.436,
+    "hair_knn": 2,
+    "hair_chroma": 1.2,
+    "clay_dev_mu": [
+      0.116,
+      -0.039,
+      -0.1034
+    ]
+  },
+  "winding": {
+    "frac_ndotv_neg_on_depth_pass": 0.023140811317472896,
+    "facing_sign": 1.0,
+    "note": "sign measured from depth-passing exterior texels, never assumed from OBJ winding"
+  },
+  "grazing_rejected": 38461,
+  "region_texels": {
+    "face": 1002904,
+    "head_neck": 0,
+    "interior_a": 0,
+    "teeth": 0,
+    "eyeballs": 2963,
+    "interior_b": 19083
+  },
+  "central_face": {
+    "texels": 84679,
+    "photo_frac": 0.9588681963650965,
+    "clay_frac": 0.041131803634903576,
+    "default_frac": 0.0,
+    "mirror_frac": 0.0,
+    "hole_frac_pre_inpaint": 0.0,
+    "mean_brightness": 0.5979182641488342,
+    "photo_face_brightness": 0.5853427404322665,
+    "brightness_ratio": 1.021484034648283,
+    "pass": true
+  },
+  "back_region": {
+    "texels": 93527,
+    "triposr_frac": 1.0,
+    "blend_frac": 0.0,
+    "photo_frac": 0.0,
+    "mirror_frac": 0.0,
+    "default_frac": 0.0,
+    "hole_frac_pre_inpaint": 0.0,
+    "mean_rgb": [
+      0.614,
+      0.438,
+      0.387
+    ],
+    "saturation": {
+      "mean_sat": 0.3745762138226272,
+      "chroma_mean": 0.17092076344365895,
+      "chroma_std": 0.05559891409219028
+    }
+  },
+  "hair_zone": {
+    "texels": 92276,
+    "mean_rgb": [
+      0.533,
+      0.394,
+      0.319
+    ],
+    "saturation": {
+      "mean_sat": 0.4059501948644826,
+      "chroma_mean": 0.15568710577515468,
+      "chroma_std": 0.026461447313856988
+    }
+  },
+  "vertex_fill": {
+    "ext_verts": 11248,
+    "photo_blend_frac": 0.597972972972973,
+    "head_neck": {
+      "verts": 1839,
+      "triposr_frac": 0.9668297988036977,
+      "default_frac": 0.03317020119630234,
+      "photo_touched_frac": 0.10984230560087004,
+      "no_photo_triposr_frac": 0.9627367135003054,
+      "no_photo_default_frac": 0.03726328649969456
+    },
+    "back_scalp_mean_rgb": [
+      0.531,
+      0.428,
+      0.363
+    ],
+    "back_scalp_saturation": {
+      "mean_sat": 0.3192432253108191,
+      "chroma_mean": 0.12240702429280884,
+      "chroma_std": 0.04411477304291002
+    },
+    "skin_mean_rgb": [
+      0.705,
+      0.5,
+      0.449
+    ]
+  },
+  "sanity_pass": true,
+  "expression_applied": true,
+  "eyes": {
+    "size": 512,
+    "iris_frac": 0.16,
+    "pupil_frac": 0.35,
+    "full_uv_radius": 0.69,
+    "iris_uv_radius": 0.1104,
+    "left_from": "subject_right",
+    "right_from": "subject_left",
+    "iris_rgb_distance": 0.004635505962943767,
+    "shared": true,
+    "left": {
+      "iris_rgb": [
+        0.282,
+        0.2947,
+        0.3049
+      ],
+      "pupil_rgb": [
+        0.0828,
+        0.0783,
+        0.0839
+      ],
+      "sclera_rgb": [
+        0.6689,
+        0.592,
+        0.5732
+      ],
+      "iris_radius_px": 24.574453859574376,
+      "center_px": [
+        386.2066650390625,
+        484.2759094238281
+      ]
+    },
+    "right": {
+      "iris_rgb": [
+        0.2803,
+        0.2905,
+        0.3058
+      ],
+      "pupil_rgb": [
+        0.0952,
+        0.089,
+        0.0878
+      ],
+      "sclera_rgb": [
+        0.6697,
+        0.5975,
+        0.5771
+      ],
+      "iris_radius_px": 24.98255313199937,
+      "center_px": [
+        639.0760498046875,
+        484.0179138183594
+      ]
+    },
+    "pairing": {
+      "model_xneg_feeds": "subject_right",
+      "proj_px": {
+        "xneg": [
+          390.7,
+          480.5
+        ],
+        "xpos": [
+          633.1,
+          480.6
+        ]
+      },
+      "dist_px_xneg": {
+        "subject_right": 5.8901567132254575,
+        "subject_left": 248.3657597055922
+      },
+      "dist_px_xpos": {
+        "subject_right": 246.93503726708744,
+        "subject_left": 6.896745250105671
+      }
+    }
+  }
+}
