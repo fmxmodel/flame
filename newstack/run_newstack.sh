@@ -17,8 +17,11 @@
 #   STAGES="4 5 6 7" bash run_newstack.sh                     # rerun from rig
 #   REFINE=0 bash run_newstack.sh                             # skip clay (A/B)
 #   TEX_SIZE=2048 DRACO=1 bash run_newstack.sh
+#   STAGES="3d" bash run_newstack.sh                          # TRELLIS color clay
+#   CLAY_COLOR=trellis STAGES="5 6 7 8" bash run_newstack.sh  # bake w/ TRELLIS colors
 #
 # Stages: 1 landmarks | 2 identity fit | 3 clay align + shrinkwrap refine
+#         3d TRELLIS colored clay (s5 color source for CLAY_COLOR=trellis)
 #         4 ARKit shapes | 5 texture bake | 6 Blender GLB export | 7 verify
 #         8 render proof images from the GLB (front/back/eye close-ups)
 # Every stage is independently rerunnable; artifacts live under $OUT/<stage>/.
@@ -48,11 +51,16 @@ STAGES=${STAGES:-"1 2 3 4 5 6 7"}
 REFINE=${REFINE:-1}          # 0 = skip clay align + shrinkwrap (pure ICT fit)
 CLAY_SOURCE=${CLAY_SOURCE:-triposr}  # triposr | triposg (sharper geometry;
                              # TripoSR still runs -- ICP target + s5 colors)
+CLAY_COLOR=${CLAY_COLOR:-triposr}    # triposr | trellis : which colored clay
+                             # s5 samples (trellis = clay_trellis_aligned.ply
+                             # from stage 3d; default triposr = no change)
+TRELLIS_DIR=${TRELLIS_DIR:-$ROOT/out_trellis}
 TEX_SIZE=${TEX_SIZE:-1024}
 DRACO=${DRACO:-0}
 S2_ARGS=${S2_ARGS:-}         # e.g. "--lam-id 0.1 --iters2 1200"
 S3A_ARGS=${S3A_ARGS:-}       # e.g. "--force-bbox --fallback-up z_up"
 S3SG_ARGS=${S3SG_ARGS:-}     # e.g. "--max-rms 1.0"
+S3D_ARGS=${S3D_ARGS:-}       # e.g. "--n-dense 150000 --max-ref-med 1.5"
 S3B_ARGS=${S3B_ARGS:-}       # e.g. "--max-disp 4 --face-weight 0.2"
 S3C_ARGS=${S3C_ARGS:-}       # e.g. "--max-reproj 25"
 S5_ARGS=${S5_ARGS:-}         # e.g. "--no-expression"
@@ -134,15 +142,30 @@ if want 3; then
   fi
 fi
 
+if want 3d; then
+  # TRELLIS colored clay: UV-sampled + densified point cloud, landmark-
+  # aligned into ICT space (gated). Only a COLOR source for s5
+  # (CLAY_COLOR=trellis); never touches geometry or topology.
+  # shellcheck disable=SC2086
+  log_run s3d "$PY" "$PIPE/s3d_trellis_clay.py" \
+      --trellis-dir "$TRELLIS_DIR" --task "$MP_TASK" --out "$OUT" $S3D_ARGS
+fi
+
 if want 4; then
   log_run s4 "$PY" "$PIPE/s4_build_shapes.py" \
       --ict "$ICT" --out "$OUT" --neutral "$NEUTRAL"
 fi
 
 if want 5; then
+  S5_CLAY=()
+  if [ "$CLAY_COLOR" = "trellis" ]; then
+    S5_CLAY=(--clay-ply "$OUT/clay/clay_trellis_aligned.ply")
+  elif [ "$CLAY_COLOR" != "triposr" ]; then
+    echo "[FATAL] CLAY_COLOR=$CLAY_COLOR is not triposr|trellis" >&2; exit 1
+  fi
   # shellcheck disable=SC2086
   log_run s5 "$PY" "$PIPE/s5_bake_texture.py" \
-      --out "$OUT" --size "$TEX_SIZE" $S5_ARGS
+      --out "$OUT" --size "$TEX_SIZE" ${S5_CLAY[@]+"${S5_CLAY[@]}"} $S5_ARGS
 fi
 
 if want 6; then

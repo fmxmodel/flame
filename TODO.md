@@ -16,6 +16,7 @@ newARC/
 │       ├── s2_fit_identity.py # fit ICT identity coeffs (linear model) to the photo landmarks
 │       ├── s3a_align_clay.py  # align TripoSR clay → ICT space (pytorch3d view sweep + Umeyama; --prefix)
 │       ├── s3a_align_triposg.py   # TripoSG clay → ICT space (wall strip + front-render landmarks + Umeyama + rigid face polish; gated)
+│       ├── s3d_trellis_clay.py    # TRELLIS textured head → dense colored ICT-space cloud (s5 color source via CLAY_COLOR=trellis; gated)
 │       ├── s3b_refine_blender.py  # gated shrinkwrap (legacy TripoSR mode + face-weighted TripoSG mode w/ bbox prescale)
 │       ├── s3c_verify_refine.py   # measurement gates: 26719v/23 loops, photo reprojection, back-region cleanliness
 │       ├── render_neutral.py  # grey Workbench+cavity proof renders (also the s3sg detection view, --square --dump-cam)
@@ -155,6 +156,30 @@ newARC/
   (+ synced into `dist/`); per-license texts under `public/licenses/`. Draco is NOT used/shipped
   (GLB is uncompressed, no DRACOLoader, no decoder in dist) — deliberately excluded. FINAL gate:
   `out/compliance_newstack.md` → **NEWSTACK-SHIP-CLEARED: yes** (standing: pin `u2net`; ICT Light only).
+
+- [x] **TRELLIS color source wired (stage `3d` + `CLAY_COLOR=trellis`)** — run + verified on pod. The
+  TRELLIS spike output (`out_trellis/head_trellis.glb`, 33,096 v / 46,944 f, 2048² baked baseColor;
+  TRELLIS-image-large MIT + the fork's PyTorch3D texturing — no nvdiffrast, COLOR SOURCE only, geometry
+  stays ICT 26719) becomes a dense ICT-space colored cloud for s5:
+  - `pipe/s3d_trellis_clay.py`: bilinear UV texture sample at each vertex + 100k area-weighted
+    barycentric face samples (UV-interpolated colors) → 133,096 colored points; landmark route (s3a's
+    colored pytorch3d view sweep → MediaPipe → pix_to_face unproject → trimmed Umeyama → rigid
+    scale-frozen face polish vs the fitted ICT face). NOTE: TRELLIS outputs are HEAD-ONLY, so s3a's
+    dist=1.7 crops the face and MediaPipe never detects — s3d defaults `--dist 2.4` (measured: robust
+    at 2.2–3.5).
+  - Gates (all PASS, artifacts saved before gating): landmark rms **0.80 cm** (≤1.5), inner-landmark→
+    surface **0.32 cm** (≤1.0), direction-aware front-depth **0.83 cm**/0 missing (≤1.2), aligned-
+    TripoSG-verts→TRELLIS median **0.325 cm** / rms(≤3cm) 0.66 (≤1.2), y-ratio 1.26 (0.5–2.0).
+  - Outputs `out/clay/clay_trellis_aligned.{ply,npz}` + `clay_trellis_align.json` (S/R/T + metrics) +
+    opaque mesh proof renders `clay_trellis_render_{front,right,back}.png`, dense-splat checks, and a
+    back A/B `clay_trellis_vs_triposr_back.png`. TripoSR/TripoSG clays untouched.
+  - Measured back-of-skull (z<−4, y>−2): TRELLIS mean RGB **[0.156, 0.142, 0.140]** luma 0.146 = real
+    dark-brown hair vs TripoSR **[0.514, 0.439, 0.388]** luma 0.456 = washed pale beige.
+  - Selector: `CLAY_COLOR=trellis` (default `triposr`, zero regression) → s5 `--clay-ply
+    out/clay/clay_trellis_aligned.ply` (dies if missing; blend logic UNCHANGED — retuning the s5 blend
+    for the darker TRELLIS palette is the next task). `bake_metrics.json` now records `clay_source`.
+  - Pod note: mediapipe 0.10.35 c-bindings need `libEGL.so.1`/`libGLESv2.so.2` — root FS is ephemeral,
+    re-`apt-get install -y libegl1 libgles2` after a pod restart.
 
 ## Decisions (don't re-litigate)
 - **"Hole in the back of the head" was NOT geometry** — it was Blender's glTF importer assigning

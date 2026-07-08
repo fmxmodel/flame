@@ -71,7 +71,10 @@ the back of the head is TripoSR-hair-colored, not a flat default.
 
 Reads out/rig/arkit_deltas.npz (single source of export geometry + UVs),
 out/fit/camera.json + expression_offset.npy, out/landmarks/input_image.png,
-out/clay/clay_aligned.ply. Writes out/tex/albedo.png + debug maps + metrics.
+out/clay/clay_aligned.ply (or --clay-ply, e.g. the TRELLIS color source
+out/clay/clay_trellis_aligned.ply via CLAY_COLOR=trellis -- same trimesh
+vertices+vertex_colors contract, blend logic unchanged).
+Writes out/tex/albedo.png + debug maps + metrics.
 """
 
 import argparse
@@ -306,6 +309,12 @@ def main():
                     help="min photo weight for cap-fit texels (lower than "
                          "--match-min-w: the scalp top is grazing by nature, "
                          "and palette STATISTICS tolerate mild stretching)")
+    ap.add_argument("--clay-ply", default=None,
+                    help="vertex-colored clay PLY to k-NN color-sample as the "
+                         "back/hair fill (default: out/clay/clay_aligned.ply "
+                         "= TripoSR; run_newstack.sh CLAY_COLOR=trellis points "
+                         "this at out/clay/clay_trellis_aligned.ply). Blend "
+                         "logic is identical for every source.")
     ap.add_argument("--eye-size", type=int, default=512,
                     help="eye texture resolution (px)")
     ap.add_argument("--iris-frac", type=float, default=None,
@@ -424,7 +433,12 @@ def main():
     match_info = {"applied": False, "reason": "no clay"}
     cap_info = {"applied": False, "reason": "no clay"}
     ctree, ccols = None, None
-    clay_ply = Path(args.out) / "clay" / "clay_aligned.ply"
+    clay_ply = (Path(args.clay_ply) if args.clay_ply
+                else Path(args.out) / "clay" / "clay_aligned.ply")
+    if args.clay_ply and not clay_ply.is_file():
+        die(f"--clay-ply {clay_ply} not found -- an explicitly selected "
+            "clay color source must exist (no silent TripoSR fallback)")
+    print(f"[s5] clay color source: {clay_ply}")
     if clay_ply.is_file():
         import trimesh
         from scipy.spatial import cKDTree
@@ -898,6 +912,7 @@ def main():
         },
         "person_mask": bg_info,
         "backdrop_rejected_texels": n_bg,
+        "clay_source": str(clay_ply),
         "params": {"clay_transfer": args.clay_transfer,
                    "hair_knn": args.hair_knn, "clay_knn": args.clay_knn,
                    "hair_chroma": args.hair_chroma, "back_sat": args.back_sat,
