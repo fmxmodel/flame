@@ -29,7 +29,8 @@ One diffuse map, no statistical/NC albedo prior:
           flattened by the legacy per-channel RGB affine (--clay-transfer
           affine, kept for A/B; MEASURED gain ~[0.96,0.90,0.94] = desaturate).
           The HAIR ZONE (scalp cap above the hairline + skull back above ear
-          level, both measured from the fitted landmarks) is special:
+          level + the rear skull down to the nape hairline at --nape-drop cm
+          below ear level, all measured from the fitted landmarks) is special:
           MEASURED, TripoSR hallucinates the hidden crown desaturated
           grey-beige, out-of-distribution vs ALL photo-visible clay (its
           chroma is even inverted), so no fitted distribution transfer can
@@ -281,9 +282,14 @@ def main():
                          "hair-zone mean) added to the photo-hair base color "
                          "in the hair zone; 0 = legacy flat palette")
     ap.add_argument("--back-sat", type=float, default=1.35,
-                    help="saturation lift over the hair/back zone (feathered "
-                         "by backfacing-ness; counters the residual TripoSR "
-                         "desaturation); 1.0 = off")
+                    help="saturation lift on the TRANSFER fill (feathered by "
+                         "backfacing-ness; counters the residual TripoSR "
+                         "desaturation; the measured cap palette is exempt); "
+                         "1.0 = off")
+    ap.add_argument("--nape-drop", type=float, default=2.5,
+                    help="cm below ear level where the back-of-skull hair "
+                         "zone feathers out into neck skin (the nape "
+                         "hairline)")
     ap.add_argument("--match-min-w", type=float, default=0.4,
                     help="min photo weight for a texel to join the palette fit")
     ap.add_argument("--match-trim", type=float, default=0.2,
@@ -458,15 +464,21 @@ def main():
 
         def hair_zone_w(p):
             # crown above the hairline; plus everything above ear level that
-            # sits behind the temple plane (z gate keeps the face front out).
+            # sits behind the temple plane (z gate keeps the face front out);
+            # plus the BACK of the skull down to the nape hairline (MEASURED:
+            # without it 72% of the visible skull-back verts sat at w_cap=0
+            # -- the whole nape/behind-ears band rendered as pale skin fill).
             # The fill only ever shows where the photo cannot see (final =
-            # w_photo*photo + (1-w_photo)*fill), and hidden above-ear surface
-            # is hair on any subject that has hair -- bald self-corrects
-            # because the palette is measured from the visible cap.
+            # w_photo*photo + (1-w_photo)*fill), and hidden above-ear/back
+            # surface is hair on any subject that has hair -- bald
+            # self-corrects because the palette is measured from the visible
+            # cap. Below the nape hairline stays neck skin.
             crown = smoothstep(p[:, 1], cap0, cap1)
             above_ear = (smoothstep(p[:, 1], y_ear + 0.5, y_ear + 3.0)
                          * smoothstep(z_ear + 3.0 - p[:, 2], 0.0, 2.0))
-            return np.maximum(crown, above_ear)
+            nape = (smoothstep(p[:, 1], y_ear - args.nape_drop, y_ear - 0.5)
+                    * smoothstep(z_ear - 1.0 - p[:, 2], 0.0, 2.0))
+            return np.maximum(crown, np.maximum(above_ear, nape))
 
         cap_mu_p, cap_mu_lc, cap_dev_mu = None, None, None
         w_cap = hair_zone_w(pos)
@@ -530,7 +542,8 @@ def main():
                     dev = clay_sharp - lum[:, None]
                     cap_dev_mu = (dev[zone].mean(0) if zone.any()
                                   else dev[cpair].mean(0))
-                    cap_mapped = cap_mapped + args.hair_chroma * (dev - cap_dev_mu)
+                    cap_mapped = cap_mapped + args.hair_chroma * np.clip(
+                        dev - cap_dev_mu, -0.2, 0.2)
                 cap_mapped = np.clip(cap_mapped, 0.0, 1.0)
                 clay_col = ((1.0 - w_cap[:, None]) * clay_col
                             + w_cap[:, None] * cap_mapped)
@@ -766,17 +779,28 @@ def main():
             ccol_v = np.clip(lum_cv[:, None]
                              + sat_v[:, None] * (ccol_v - lum_cv[:, None]),
                              0.0, 1.0)
+        near = dist_v < args.clay_max_dist
         if cap_info.get("applied"):
+            # anchors (luma mean + chroma-dev mean) are re-measured on the
+            # VERTEX samples of the applied zone -- the texel anchors do not
+            # transfer (MEASURED: vertex dev distribution is less warm than
+            # the texel zone's; a texel dev_mu anchor blue-shifted the crown
+            # verts by -hair_chroma*dev_mu ~ [-0.14,+0.05,+0.13])
             lum_v = sharp_v @ LUM_W
-            ratio_v = np.clip(lum_v / cap_mu_lc, 0.6, 1.4)
+            zone_v = near & (w_cap_v > 0.5)
+            mu_lc_v = float(max(lum_v[zone_v].mean() if zone_v.any()
+                                else cap_mu_lc, 1e-6))
+            ratio_v = np.clip(lum_v / mu_lc_v, 0.6, 1.4)
             cap_v = cap_mu_p[None] * ratio_v[:, None]
             if args.hair_chroma > 0 and cap_dev_mu is not None:
-                cap_v = cap_v + args.hair_chroma * (
-                    (sharp_v - lum_v[:, None]) - cap_dev_mu)
+                dev_v = sharp_v - lum_v[:, None]
+                dev_mu_v = (dev_v[zone_v].mean(0) if zone_v.any()
+                            else cap_dev_mu)
+                cap_v = cap_v + args.hair_chroma * np.clip(
+                    dev_v - dev_mu_v, -0.2, 0.2)
             cap_v = np.clip(cap_v, 0.0, 1.0)
             ccol_v = ((1.0 - w_cap_v[:, None]) * ccol_v
                       + w_cap_v[:, None] * cap_v)
-        near = dist_v < args.clay_max_dist
         tmp = vcol[ext_v]
         tmp[near] = ccol_v[near]
         vcol[ext_v] = tmp
@@ -877,6 +901,7 @@ def main():
         "params": {"clay_transfer": args.clay_transfer,
                    "hair_knn": args.hair_knn, "clay_knn": args.clay_knn,
                    "hair_chroma": args.hair_chroma, "back_sat": args.back_sat,
+                   "nape_drop": args.nape_drop,
                    "ndotv_lo": args.ndotv_lo, "ndotv_hi": args.ndotv_hi,
                    "bg_blur_sigma": args.bg_blur_sigma},
         "clay_match": match_info,
