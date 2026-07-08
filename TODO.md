@@ -88,6 +88,30 @@ newARC/
     `sources_frac`, `person_mask`, `clay_match`, `cap_match`. s7 PASS (52/52, OPAQUE, doubleSided).
     Proof renders `out/renders/glb_{front,profile,back}_full.png` + eyes/gaze/tongue; measured back
     pixels are warm browns (105–169 R), zero default texels on the back region.
+- [x] **s5 seam + hair-fidelity rework** (run + verified on pod, TripoSG geometry; judged against a
+  fresh render of the pre-change GLB, not a stale screenshot) — the back/hair keeps TripoSR's tonal
+  variation instead of being flattened to a desaturated palette mean, and the photo→fill feather is wider:
+  - **`--clay-transfer lumachroma` (default)**: luma gets a trimmed affine LSQ onto the photo's luma
+    (fitted gain 0.929/offset 0.075 — brightness lands right, no hairline/jaw step); CHROMA is
+    preserved and rescaled by the photo/clay chroma std ratio (fitted [1.087, 1.056, 1.151] — amplify,
+    not flatten; the legacy per-channel RGB affine measured gain [0.96, 0.90, 0.94] = desaturate,
+    kept as `--clay-transfer affine` for A/B).
+  - **Hair zone**: photo-hair base MODULATED by TripoSR's local chroma deviation about the applied-zone
+    mean (`--hair-chroma 1.2`, clamped ±0.2/ch) sampled at sharper k-NN (`--hair-knn 2` vs 8 elsewhere);
+    luma ratio anchored on the APPLIED zone (visible-cap anchor railed the clamp → pale-tan crown);
+    zone extended down to the nape hairline (`--nape-drop 2.5` cm below ear level — 72% of visible
+    skull-back verts had w_cap=0 before). RestMat re-measures both anchors on its own vertex samples
+    (texel anchors blue-shifted the crown verts by −hair_chroma·dev_mu ≈ [−0.14, +0.05, +0.13]).
+  - **Seam**: N·V feather widened 0.15/0.50 → `--ndotv-lo 0.08 / --ndotv-hi 0.60` (~53–85° band),
+    person-mask blur σ 2→3; `--back-sat 1.35` lifts the TRANSFER fill only (backfacing-feathered;
+    the measured cap palette is exempt — it already carries real hair saturation).
+  - **Measured (bake_metrics.json before → after)**: back_region mean_sat 0.342 → 0.375, chroma_std
+    0.032 → 0.056 (+75% tonal variation); hair_zone 76.7k → 92.3k texels, mean lands on photo hair
+    [0.533, 0.394, 0.319]; render pixels: mid-back sat 0.249 → 0.301, behind-ear 0.326 → 0.377,
+    hairline max local step −16%. central_face gate PASS (photo_frac 0.959, brightness_ratio 1.02),
+    back_region triposr_frac 1.0 / default 0.0, s7 PASS (52/52, all mats OPAQUE + doubleSided).
+    Before/after proof: `out/renders/glb_{front,profile,back}_full_{before,after}.png`;
+    legacy-mode metrics kept in `out/newstack_bake_metrics_before.json`.
 - [x] **s5 texture bake FIX authored** (verified on pod) — winding was inverted for ICT topology → dark central face. Now **measures** the camera-facing sign (like `recon/bake_texture.py`), rejects grazing texels + X-mirror fallback, exterior-priority UV rasterization so interior islands can't steal face texels, and a `central_face` sanity gate in `bake_metrics.json`. Verified: `winding.facing_sign` measured, `central_face.pass` true (photo_frac 0.95).
 - [x] **tongueOut → 52/52** — CODED (pending pod re-run of s4+): `tongue_synth.py` selects the tongue
   from ICT's real static geometry (region `[14062:17039)` verts with cKDTree distance-to-nearest-tooth
